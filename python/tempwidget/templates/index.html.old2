@@ -1,0 +1,239 @@
+<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    color: #fff;
+    font-family: system-ui, sans-serif;
+  }
+
+  /* Hela viewporten */
+  .viewport {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    touch-action: pan-y; /* låt vertikal scroll vara ok om du senare vill, men vi använder horisontellt swipe */
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* Rälsen med sidor */
+  .track {
+    display: flex;
+    height: 100%;
+    width: 300%;              /* 3 sidor */
+    transform: translateX(0);
+    transition: transform 260ms ease;
+    will-change: transform;
+  }
+
+  /* Varje sida fyller skärmen */
+  .page {
+    width: 100%;
+    height: 100%;
+    flex: 0 0 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Kortet i mitten */
+  .card {
+    min-width: min(900px, 92vw);
+    padding: 34px 38px;
+    border-radius: 22px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.35);
+    text-align: center;
+  }
+
+  .label {
+    font-size: 32px;
+    opacity: .75;
+    margin-bottom: 12px;
+  }
+
+  .value {
+    font-size: 140px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 1px;
+  }
+
+  .sub {
+    margin-top: 10px;
+    font-size: 18px;
+    opacity: .55;
+  }
+
+  /* Små prickar nederst */
+  .dots {
+    position: absolute;
+    left: 0; right: 0;
+    bottom: 18px;
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    pointer-events: none;
+  }
+
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 100px;
+    background: rgba(255,255,255,.25);
+  }
+
+  .dot.active {
+    background: rgba(255,255,255,.9);
+  }
+</style>
+</head>
+
+<body>
+  <div class="viewport" id="viewport">
+    <div class="track" id="track">
+      <!-- Page 1 -->
+      <div class="page">
+        <div class="card" style="background:#003300;">
+          <div class="label" id="label1">Rum temp</div>
+          <div class="value" id="value1">--</div>
+          <div class="sub">Swipe ← →</div>
+        </div>
+      </div>
+
+      <!-- Page 2 -->
+      <div class="page">
+        <div class="card" style="background:#001a33;">
+          <div class="label" id="label2">Akvarium</div>
+          <div class="value" id="value2">--</div>
+          <div class="sub">Swipe ← →</div>
+        </div>
+      </div>
+
+      <!-- Page 3 -->
+      <div class="page">
+        <div class="card" style="background:#330000;">
+          <div class="label" id="label3">CPU</div>
+          <div class="value" id="value3">--</div>
+          <div class="sub">Swipe ← →</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dots" id="dots">
+      <div class="dot active"></div>
+      <div class="dot"></div>
+      <div class="dot"></div>
+    </div>
+  </div>
+
+<script>
+  // ----- Simulerade sensorer (3 sidor) -----
+  const pages = [
+    { name: "Rum temp",  unit: "°C", fn: t => 22 + Math.sin(t/20)*1.5 },
+    { name: "Akvarium",  unit: "°C", fn: t => 25 + Math.sin(t/15)*0.4 },
+    { name: "CPU",       unit: "°C", fn: t => 48 + Math.sin(t/5)*3.0 }
+  ];
+
+  function updateValues(){
+    const t = Date.now()/1000;
+    document.getElementById("label1").textContent = pages[0].name;
+    document.getElementById("value1").textContent = pages[0].fn(t).toFixed(1) + pages[0].unit;
+
+    document.getElementById("label2").textContent = pages[1].name;
+    document.getElementById("value2").textContent = pages[1].fn(t).toFixed(1) + pages[1].unit;
+
+    document.getElementById("label3").textContent = pages[2].name;
+    document.getElementById("value3").textContent = pages[2].fn(t).toFixed(1) + pages[2].unit;
+  }
+  setInterval(updateValues, 500);
+  updateValues();
+
+  // ----- Carousel swipe -----
+  const viewport = document.getElementById("viewport");
+  const track = document.getElementById("track");
+  const dots = Array.from(document.querySelectorAll(".dot"));
+
+  let index = 0; // 0..2
+  let dragging = false;
+  let startX = 0;
+  let currentX = 0;
+  let baseTranslate = 0; // px
+
+  function setDots(){
+    dots.forEach((d,i)=> d.classList.toggle("active", i===index));
+  }
+
+  function snapToIndex(){
+    const w = viewport.clientWidth;
+    track.style.transition = "transform 260ms ease";
+    track.style.transform = `translateX(${-index * w}px)`;
+    setDots();
+  }
+
+  function onDown(x){
+    dragging = true;
+    startX = x;
+    currentX = x;
+
+    const w = viewport.clientWidth;
+    baseTranslate = -index * w;
+
+    track.style.transition = "none"; // ingen animation under drag
+  }
+
+  function onMove(x){
+    if(!dragging) return;
+    currentX = x;
+
+    const dx = currentX - startX;
+    track.style.transform = `translateX(${baseTranslate + dx}px)`;
+  }
+
+  function onUp(){
+    if(!dragging) return;
+    dragging = false;
+
+    const dx = currentX - startX;
+    const w = viewport.clientWidth;
+
+    // tröskel: 15% av skärmbredd eller 80px
+    const threshold = Math.max(80, w * 0.15);
+
+    if(dx < -threshold && index < pages.length - 1){
+      index += 1; // swipe vänster -> nästa sida
+    } else if(dx > threshold && index > 0){
+      index -= 1; // swipe höger -> föregående
+    }
+
+    snapToIndex();
+  }
+
+  // Pointer events (bäst på Pi + touch/mus)
+  viewport.addEventListener("pointerdown", (e)=>{
+    viewport.setPointerCapture?.(e.pointerId);
+    onDown(e.clientX);
+  });
+  viewport.addEventListener("pointermove", (e)=> onMove(e.clientX));
+  viewport.addEventListener("pointerup", onUp);
+  viewport.addEventListener("pointercancel", onUp);
+
+  // Fallback för äldre: mus
+  viewport.addEventListener("mousedown", (e)=> onDown(e.clientX));
+  viewport.addEventListener("mousemove", (e)=> onMove(e.clientX));
+  window.addEventListener("mouseup", onUp);
+
+  // Om skärmen roterar eller upplösning ändras: snappa om
+  window.addEventListener("resize", snapToIndex);
+
+  // init
+  snapToIndex();
+</script>
+</body>
+</html>

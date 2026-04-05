@@ -1,0 +1,134 @@
+<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="60">
+<style>
+html, body {
+    margin:0;
+    padding:0;
+    overflow:hidden;
+    height:100%;
+    background:black;
+    color:white;
+    font-family:sans-serif;
+}
+
+#card {
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    height:100%;
+    user-select:none;
+}
+
+.label {
+    font-size:32px;
+    opacity:.7;
+    margin-bottom:10px;
+}
+
+.value {
+    font-size:140px;
+    font-variant-numeric: tabular-nums;
+}
+</style>
+</head>
+
+<body>
+
+<div id="card">
+    <div class="label" id="label">Sensor</div>
+    <div class="value" id="value">--</div>
+</div>
+
+<script>
+
+// ---------- Simulerade sensorer ----------
+
+let sensors = [
+    {name:"Rum temp", fn:t=>22 + Math.sin(t/20)*1.5, unit:"°C"},
+    {name:"Akvarium", fn:t=>25 + Math.sin(t/15)*0.4, unit:"°C"},
+    {name:"CPU", fn:t=>48 + Math.sin(t/5)*3, unit:"°C"},
+    {name:"Luftfukt", fn:t=>40 + Math.sin(t/18)*10, unit:"%"}
+];
+
+let index = 0;
+
+
+// ---------- Uppdatera display ----------
+
+function update(){
+    let t = Date.now()/1000;
+    let s = sensors[index];
+
+    document.getElementById("label").textContent = s.name;
+    document.getElementById("value").textContent =
+        s.fn(t).toFixed(1) + s.unit;
+}
+
+setInterval(update, 500);
+update();
+
+
+// ---------- Unified swipe handling ----------
+
+let startX = null;
+
+function handleStart(x){
+    startX = x;
+}
+
+function handleEnd(x){
+    if(startX === null) return;
+
+    let dx = x - startX;
+
+    if(dx > 80){
+        index = (index - 1 + sensors.length) % sensors.length;
+        update();
+    }
+
+    if(dx < -80){
+        index = (index + 1) % sensors.length;
+        update();
+    }
+
+    startX = null;
+}
+
+
+// Touch events
+document.body.addEventListener("touchstart", e=>{
+    handleStart(e.touches[0].clientX);
+});
+
+document.body.addEventListener("touchend", e=>{
+    handleEnd(e.changedTouches[0].clientX);
+});
+
+
+// Mouse drag events (RPi viktigt)
+document.body.addEventListener("mousedown", e=>{
+    handleStart(e.clientX);
+});
+
+document.body.addEventListener("mouseup", e=>{
+    handleEnd(e.clientX);
+});
+
+
+// Pointer events (framtidssäkert)
+document.body.addEventListener("pointerdown", e=>{
+    handleStart(e.clientX);
+});
+
+document.body.addEventListener("pointerup", e=>{
+    handleEnd(e.clientX);
+});
+
+</script>
+
+</body>
+</html>
