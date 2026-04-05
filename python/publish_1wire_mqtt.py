@@ -26,11 +26,13 @@ FAMILY_NAMES = {
     "3b": "ds1825",
 }
 MIN_PUBLISH_INTERVAL_SECONDS = 3600.0
+MIN_TEMP_CHANGE_C = 0.125
 
 
 @dataclass
 class SensorState:
     last_payload: str | None = None
+    last_temperature_c: float | None = None
     last_publish_time: float = 0.0
 
 
@@ -96,14 +98,15 @@ def build_client(host: str, port: int) -> mqtt.Client:
 
 def should_publish(
     state: SensorState,
-    payload: str,
+    temperature_c: float,
     now: float,
     min_publish_interval: float,
+    min_temp_change_c: float,
 ) -> bool:
-    if state.last_payload is None:
+    if state.last_temperature_c is None:
         return True
 
-    if payload != state.last_payload:
+    if abs(temperature_c - state.last_temperature_c) > min_temp_change_c:
         return True
 
     return (now - state.last_publish_time) >= min_publish_interval
@@ -114,6 +117,7 @@ def publish_sensor_data(
     sensor_dir: Path,
     sensor_states: dict[str, SensorState],
     min_publish_interval: float,
+    min_temp_change_c: float,
 ) -> None:
     sensor_id = sensor_dir.name
     sensor_type = get_sensor_type(sensor_id)
@@ -125,8 +129,17 @@ def publish_sensor_data(
     now = time.time()
     state = sensor_states.setdefault(sensor_id, SensorState())
 
-    if not should_publish(state, payload, now, min_publish_interval):
-        debug(f"Skipping publish for {topic}; payload unchanged at {payload}")
+    if not should_publish(
+        state,
+        temperature_c,
+        now,
+        min_publish_interval,
+        min_temp_change_c,
+    ):
+        debug(
+            f"Skipping publish for {topic}; change is <= {min_temp_change_c:.3f} C "
+            f"(current {payload}, previous {state.last_payload})"
+        )
         return
 
     debug(f"Publishing payload {payload} to topic {topic} with retain=true")
@@ -137,6 +150,7 @@ def publish_sensor_data(
         raise RuntimeError(f"MQTT publish failed with rc={message.rc}")
 
     state.last_payload = payload
+    state.last_temperature_c = temperature_c
     state.last_publish_time = now
     info(f"Published {payload} C to {topic}")
 
@@ -179,6 +193,7 @@ def main() -> int:
                         sensor_dir,
                         sensor_states,
                         MIN_PUBLISH_INTERVAL_SECONDS,
+                        MIN_TEMP_CHANGE_C,
                     )
                 except Exception as exc:
                     error(f"{sensor_dir.name}: {exc}")
