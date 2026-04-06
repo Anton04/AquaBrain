@@ -5,13 +5,14 @@ SERVICE_NAME="aquabrain-sensors.service"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PYTHON_BIN="${REPO_DIR}/.venv/bin/python"
+PIP_BIN="${REPO_DIR}/.venv/bin/pip"
 SCRIPT_PATH="${SCRIPT_DIR}/publish_sensors_mqtt.py"
+REQUIREMENTS_PATH="${SCRIPT_DIR}/requirements.txt"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
 CURRENT_USER="$(id -un)"
 
-if [[ ! -x "${PYTHON_BIN}" ]]; then
-  echo "Missing virtualenv python at ${PYTHON_BIN}" >&2
-  echo "Create it first with: python3 -m venv ${REPO_DIR}/.venv" >&2
+if [[ ! -f "${REQUIREMENTS_PATH}" ]]; then
+  echo "Missing requirements file at ${REQUIREMENTS_PATH}" >&2
   exit 1
 fi
 
@@ -19,6 +20,14 @@ if [[ ! -f "${SCRIPT_PATH}" ]]; then
   echo "Missing script at ${SCRIPT_PATH}" >&2
   exit 1
 fi
+
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Creating virtualenv at ${REPO_DIR}/.venv"
+  python3 -m venv "${REPO_DIR}/.venv"
+fi
+
+"${PIP_BIN}" install --upgrade pip
+"${PIP_BIN}" install -r "${REQUIREMENTS_PATH}"
 
 sudo tee "${SERVICE_PATH}" >/dev/null <<EOF
 [Unit]

@@ -1,0 +1,223 @@
+<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+html, body {
+  margin:0;
+  padding:0;
+  height:100%;
+  overflow:hidden;
+  background:#000;
+  color:#fff;
+  font-family:system-ui,sans-serif;
+}
+
+.viewport {
+  width:100vw;
+  height:100vh;
+  touch-action:pan-y;
+  user-select:none;
+}
+
+.track {
+  display:flex;
+  height:100%;
+  transform:translate3d(0,0,0);
+  transition:transform 260ms ease;
+  will-change:transform;
+}
+
+.page {
+  flex:0 0 100vw;
+  width:100vw;
+  height:100%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
+.card {
+  min-width:min(900px,92vw);
+  padding:34px 38px;
+  border-radius:22px;
+  box-shadow:0 10px 30px rgba(0,0,0,.35);
+  text-align:center;
+}
+
+.label { font-size:32px; opacity:.75; margin-bottom:12px; }
+.value { font-size:140px; font-variant-numeric:tabular-nums; }
+.sub   { margin-top:10px; font-size:18px; opacity:.55; }
+
+.dots {
+  position:absolute;
+  left:0; right:0; bottom:18px;
+  display:flex;
+  justify-content:center;
+  gap:10px;
+}
+
+.dot {
+  width:10px; height:10px;
+  border-radius:100px;
+  background:rgba(255,255,255,.25);
+}
+
+.dot.active {
+  background:rgba(255,255,255,.9);
+}
+</style>
+</head>
+
+<body>
+
+<div class="viewport" id="viewport">
+  <div class="track" id="track">
+
+    <div class="page">
+      <div class="card" style="background:#003300;">
+        <div class="label">Rum temp</div>
+        <div class="value" id="value1">--</div>
+        <div class="sub" id="roomStatus">No MQTT source</div>
+      </div>
+    </div>
+
+    <div class="page">
+      <div class="card" style="background:#001a33;">
+        <div class="label">Akvarium</div>
+        <div class="value" id="value2">--</div>
+        <div class="sub" id="aquariumStatus">No MQTT source</div>
+      </div>
+    </div>
+
+    <div class="page">
+      <div class="card" style="background:#330000;">
+        <div class="label">Raspberry Pi CPU</div>
+        <div class="value" id="value3">--</div>
+        <div class="sub" id="cpuStatus">No MQTT source</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="dots">
+    <div class="dot active"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+  </div>
+</div>
+
+<script>
+const viewport = document.getElementById("viewport");
+const track = document.getElementById("track");
+const dots = Array.from(document.querySelectorAll(".dot"));
+
+let index = 0;
+let dragging = false;
+let startX = 0;
+let currentX = 0;
+let baseTranslate = 0;
+const pageCount = 3;
+
+function formatValue(value){
+  return value === null || value === undefined ? "--" : `${value.toFixed(1)}°C`;
+}
+
+function setDots(){
+  dots.forEach((d,i)=>d.classList.toggle("active",i===index));
+}
+
+function snap(notify = false){
+  const w = window.innerWidth;
+  track.style.transition = "transform 260ms ease";
+  track.style.transform = `translate3d(${-index*w}px,0,0)`;
+  setDots();
+  if(notify){
+    publishCurrentView();
+  }
+}
+
+async function publishCurrentView(){
+  try{
+    await fetch("/api/view",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({index})
+    });
+  }catch{}
+}
+
+function down(x){
+  dragging = true;
+  startX = currentX = x;
+  baseTranslate = -index * window.innerWidth;
+  track.style.transition = "none";
+}
+
+function move(x){
+  if(!dragging) return;
+  currentX = x;
+  track.style.transform = `translate3d(${baseTranslate + (x - startX)}px,0,0)`;
+}
+
+function up(){
+  if(!dragging) return;
+  dragging = false;
+
+  const dx = currentX - startX;
+  const w = window.innerWidth;
+  const threshold = Math.max(80, w * 0.15);
+  const previousIndex = index;
+
+  if(dx < -threshold && index < pageCount - 1) index++;
+  else if(dx > threshold && index > 0) index--;
+
+  snap(index !== previousIndex);
+}
+
+async function updateState(){
+  try{
+    const response = await fetch("/api/state", {cache:"no-store"});
+    const data = await response.json();
+
+    document.getElementById("value1").textContent = formatValue(data.room.value);
+    document.getElementById("roomStatus").textContent = data.room.status;
+
+    document.getElementById("value2").textContent = formatValue(data.aquarium.value);
+    document.getElementById("aquariumStatus").textContent = data.aquarium.status;
+
+    document.getElementById("value3").textContent = formatValue(data.cpu.value);
+    document.getElementById("cpuStatus").textContent = data.cpu.status;
+
+    if(!dragging && data.currentView && data.currentView.index !== index){
+      index = data.currentView.index;
+      snap(false);
+    }
+  }catch{
+    document.getElementById("roomStatus").textContent = "Backend offline";
+    document.getElementById("aquariumStatus").textContent = "Backend offline";
+    document.getElementById("cpuStatus").textContent = "Backend offline";
+  }
+}
+
+viewport.addEventListener("pointerdown", e => {
+  viewport.setPointerCapture?.(e.pointerId);
+  down(e.clientX);
+});
+viewport.addEventListener("pointermove", e => move(e.clientX));
+viewport.addEventListener("pointerup", up);
+viewport.addEventListener("pointercancel", up);
+
+viewport.addEventListener("mousedown", e => down(e.clientX));
+viewport.addEventListener("mousemove", e => move(e.clientX));
+window.addEventListener("mouseup", up);
+
+window.addEventListener("resize", () => snap(false));
+
+setInterval(updateState, 500);
+updateState();
+snap(false);
+</script>
+</body>
+</html>
