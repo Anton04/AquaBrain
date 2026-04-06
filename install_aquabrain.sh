@@ -5,6 +5,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SENSOR_INSTALL_SCRIPT="${REPO_DIR}/python/server/install_sensor_service.sh"
 AQUAVIEW_INSTALL_SCRIPT="${REPO_DIR}/webapp/aquaview/install_aquaview_services.sh"
 DESKTOP_SHORTCUT_INSTALL_SCRIPT="${REPO_DIR}/install_desktop_shortcut.sh"
+DESKTOP_LAUNCH_SCRIPT="${REPO_DIR}/launch_aquabrain_kiosk.sh"
 
 log() {
   printf '\n==> %s\n' "$1"
@@ -44,8 +45,9 @@ echo "6. Print useful follow-up commands if something needs attention."
 require_file "${SENSOR_INSTALL_SCRIPT}"
 require_file "${AQUAVIEW_INSTALL_SCRIPT}"
 require_file "${DESKTOP_SHORTCUT_INSTALL_SCRIPT}"
+require_file "${DESKTOP_LAUNCH_SCRIPT}"
 
-chmod +x "${SENSOR_INSTALL_SCRIPT}" "${AQUAVIEW_INSTALL_SCRIPT}" "${DESKTOP_SHORTCUT_INSTALL_SCRIPT}"
+chmod +x "${SENSOR_INSTALL_SCRIPT}" "${AQUAVIEW_INSTALL_SCRIPT}" "${DESKTOP_SHORTCUT_INSTALL_SCRIPT}" "${DESKTOP_LAUNCH_SCRIPT}"
 
 run_step \
   "Installing the MQTT sensor publisher service from python/server/install_sensor_service.sh" \
