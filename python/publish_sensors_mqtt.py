@@ -21,6 +21,8 @@ except ImportError:
 
 W1_BASE_PATH = Path("/sys/bus/w1/devices")
 CPU_TEMP_PATH = Path("/sys/class/thermal/thermal_zone0/temp")
+SCREEN_ENABLED_PATH = Path("/sys/class/drm/card0-DSI-2/enabled")
+SCREEN_STATUS_PATH = Path("/sys/class/drm/card0-DSI-2/status")
 FAMILY_NAMES = {
     "10": "ds18s20",
     "22": "ds1822",
@@ -30,12 +32,18 @@ FAMILY_NAMES = {
 MIN_PUBLISH_INTERVAL_SECONDS = 3600.0
 MIN_TEMP_CHANGE_C = 0.125
 CPU_TEMP_TOPIC = "internal/cpu-temp"
+SCREEN_ACTIVE_TOPIC = "properties/screen_active"
 
 
 @dataclass
 class SensorState:
     last_temperature_c: float | None = None
     last_publish_time: float = 0.0
+
+
+@dataclass
+class BooleanState:
+    last_value: bool | None = None
 
 
 def debug(message: str) -> None:
@@ -97,6 +105,28 @@ def read_cpu_temperature() -> float:
     temp_raw = CPU_TEMP_PATH.read_text().strip()
     debug(f"Raw CPU temperature value: {temp_raw}")
     return float(temp_raw) / 1000.0
+
+
+def read_screen_active() -> bool:
+    if not SCREEN_ENABLED_PATH.exists():
+        raise FileNotFoundError(f"Screen enabled path not found: {SCREEN_ENABLED_PATH}")
+    if not SCREEN_STATUS_PATH.exists():
+        raise FileNotFoundError(f"Screen status path not found: {SCREEN_STATUS_PATH}")
+
+    enabled = SCREEN_ENABLED_PATH.read_text().strip()
+    status = SCREEN_STATUS_PATH.read_text().strip()
+    debug(f"Raw screen enabled value: {enabled}")
+    debug(f"Raw screen status value: {status}")
+
+    if status != "connected":
+        return False
+
+    if enabled == "enabled":
+        return True
+    if enabled == "disabled":
+        return False
+
+    raise ValueError(f"Unexpected screen enabled value: {enabled}")
 
 
 def build_client(host: str, port: int) -> mqtt.Client:
@@ -170,6 +200,29 @@ def publish_temperature(
     info(f"Published {payload} to {topic}")
 
 
+def publish_boolean_state(
+    client: mqtt.Client,
+    topic: str,
+    value: bool,
+    boolean_states: dict[str, BooleanState],
+) -> None:
+    state = boolean_states.setdefault(topic, BooleanState())
+    if state.last_value is value:
+        debug(f"Skipping publish for {topic}; value unchanged at {value}")
+        return
+
+    payload = json.dumps({"time": int(time.time()), "value": value}, separators=(",", ":"))
+    debug(f"Publishing payload {payload} to topic {topic} with retain=true")
+
+    message = client.publish(topic, payload=payload, qos=0, retain=True)
+    message.wait_for_publish()
+    if message.rc != mqtt.MQTT_ERR_SUCCESS:
+        raise RuntimeError(f"MQTT publish failed with rc={message.rc}")
+
+    state.last_value = value
+    info(f"Published {payload} to {topic}")
+
+
 def publish_1wire_sensors(
     client: mqtt.Client,
     sensor_states: dict[str, SensorState],
@@ -221,6 +274,17 @@ def publish_cpu_temperature(
         error(f"cpu-temp: {exc}")
 
 
+def publish_screen_active(
+    client: mqtt.Client,
+    boolean_states: dict[str, BooleanState],
+) -> None:
+    try:
+        is_active = read_screen_active()
+        publish_boolean_state(client, SCREEN_ACTIVE_TOPIC, is_active, boolean_states)
+    except Exception as exc:
+        error(f"screen_active: {exc}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Read local temperatures and publish values to a local MQTT broker."
@@ -245,6 +309,7 @@ def main() -> int:
     args = parse_args()
     client = build_client(args.host, args.port)
     sensor_states: dict[str, SensorState] = {}
+    boolean_states: dict[str, BooleanState] = {}
     try:
         while True:
             publish_1wire_sensors(
@@ -259,6 +324,7 @@ def main() -> int:
                 MIN_PUBLISH_INTERVAL_SECONDS,
                 MIN_TEMP_CHANGE_C,
             )
+            publish_screen_active(client, boolean_states)
 
             if args.once:
                 break
