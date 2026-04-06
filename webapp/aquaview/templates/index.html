@@ -259,6 +259,10 @@ function setDots(){
   dots.forEach((d,i)=>d.classList.toggle("active",i===index));
 }
 
+function isInteractiveTarget(target){
+  return Boolean(target?.closest("button, a, input, select, textarea, label"));
+}
+
 function setAdminBusy(isBusy){
   [refreshStatusButton, minimizeButton, closeButton, updateButton].forEach(button => {
     button.disabled = isBusy;
@@ -406,16 +410,13 @@ async function updateState(){
 }
 
 viewport.addEventListener("pointerdown", e => {
+  if(isInteractiveTarget(e.target)) return;
   viewport.setPointerCapture?.(e.pointerId);
   down(e.clientX);
 });
 viewport.addEventListener("pointermove", e => move(e.clientX));
 viewport.addEventListener("pointerup", up);
 viewport.addEventListener("pointercancel", up);
-
-viewport.addEventListener("mousedown", e => down(e.clientX));
-viewport.addEventListener("mousemove", e => move(e.clientX));
-window.addEventListener("mouseup", up);
 
 window.addEventListener("resize", () => snap(false));
 
