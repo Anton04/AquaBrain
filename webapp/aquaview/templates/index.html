@@ -21,14 +21,19 @@ body {
 .clock {
   position:absolute;
   top:18px;
-  left:0;
-  right:0;
-  text-align:center;
+  right:24px;
   font-size:28px;
   font-variant-numeric:tabular-nums;
   letter-spacing:.04em;
   color:rgba(255,255,255,.9);
   z-index:10;
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+.clock-icon {
+  font-size:24px;
 }
 
 .viewport {
@@ -151,7 +156,10 @@ body {
 
 <body>
 
-<div class="clock" id="clockValue">--:--:--</div>
+<div class="clock">
+  <span class="clock-icon">🕒</span>
+  <span id="clockValue">--:--:--</span>
+</div>
 
 <div class="viewport" id="viewport">
   <div class="track" id="track">
