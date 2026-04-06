@@ -1,16 +1,30 @@
 # Sensor MQTT Publisher
 
-`publish_sensors_mqtt.py` reads local temperatures on a Raspberry Pi and publishes them to a local MQTT broker.
+`publish_sensors_mqtt.py` reads local sensor and display state on a Raspberry Pi and publishes them to a local MQTT broker.
 
 Published topics:
 
 - `1wire/<sensor_type>/<sensor_id>`
 - `internal/cpu-temp`
+- `properties/screen_active`
+- `properties/last_touch_time`
 
-Payload format:
+Temperature payload format:
 
 ```json
 {"time":1712419200,"temperature_c":24.875}
+```
+
+Boolean payload format:
+
+```json
+{"time":1712419200,"value":true}
+```
+
+Touch payload format:
+
+```json
+{"time":1712419200}
 ```
 
 Behavior:
@@ -19,6 +33,8 @@ Behavior:
 - Publishes immediately on process start.
 - Publishes again when temperature changes by more than `0.125 C`.
 - Publishes at least once per hour even if the value does not change.
+- Polls screen state every `0.5` seconds by default.
+- Publishes `properties/last_touch_time` whenever a touch event is received from Linux input devices.
 
 ## Setup
 
@@ -36,6 +52,12 @@ Run manually:
 
 ```bash
 /home/anton/server/.venv/bin/python /home/anton/server/python/publish_sensors_mqtt.py
+```
+
+Adjust polling intervals if needed:
+
+```bash
+/home/anton/server/.venv/bin/python /home/anton/server/python/publish_sensors_mqtt.py --screen-interval 0.5 --sensor-interval 5
 ```
 
 ## Install As Service
