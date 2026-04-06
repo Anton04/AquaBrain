@@ -197,6 +197,7 @@ body {
           <div class="admin-meta-row" id="adminLocalCommit">Installerad version: --</div>
           <div class="admin-meta-row" id="adminRemoteCommit">Senaste origin-version: --</div>
           <div class="admin-meta-row" id="adminWorktree">Lokala ändringar: --</div>
+          <div class="admin-meta-row" id="adminKiosk">Kiosk: --</div>
         </div>
         <div class="admin-actions">
           <button class="admin-button info" id="refreshStatusButton">Kolla igen</button>
@@ -236,12 +237,14 @@ const adminBranch = document.getElementById("adminBranch");
 const adminLocalCommit = document.getElementById("adminLocalCommit");
 const adminRemoteCommit = document.getElementById("adminRemoteCommit");
 const adminWorktree = document.getElementById("adminWorktree");
+const adminKiosk = document.getElementById("adminKiosk");
 const adminFeedback = document.getElementById("adminFeedback");
 const refreshStatusButton = document.getElementById("refreshStatusButton");
 const minimizeButton = document.getElementById("minimizeButton");
 const closeButton = document.getElementById("closeButton");
 const updateButton = document.getElementById("updateButton");
 let adminStatusLoaded = false;
+let kioskEnabled = true;
 
 function formatValue(value){
   return value === null || value === undefined ? "--" : `${value.toFixed(1)}°C`;
@@ -269,14 +272,40 @@ function setAdminBusy(isBusy){
   });
 }
 
-function updateAdmin(system){
+function updateKioskControls(kiosk){
+  const running = Boolean(kiosk?.running);
+  kioskEnabled = kiosk?.enabled !== false;
+
+  if(kioskEnabled){
+    closeButton.textContent = "Stäng kiosk";
+    closeButton.classList.remove("primary");
+    closeButton.classList.add("danger");
+  }else{
+    closeButton.textContent = "Starta kiosk";
+    closeButton.classList.remove("danger");
+    closeButton.classList.add("primary");
+  }
+
+  if(!kiosk){
+    adminKiosk.textContent = "Kiosk: --";
+    minimizeButton.disabled = true;
+    return;
+  }
+
+  adminKiosk.textContent = `Kiosk: ${running ? "igång" : (kioskEnabled ? "väntar på start" : "avstängd")}`;
+  minimizeButton.disabled = !running;
+}
+
+function updateAdmin(system, kiosk){
   if(!system){
     adminSummary.textContent = "Kunde inte läsa systemstatus.";
     adminBranch.textContent = "Branch: --";
     adminLocalCommit.textContent = "Installerad version: --";
     adminRemoteCommit.textContent = "Senaste origin-version: --";
     adminWorktree.textContent = "Lokala ändringar: --";
+    adminKiosk.textContent = "Kiosk: --";
     updateButton.disabled = true;
+    updateKioskControls(null);
     return;
   }
 
@@ -286,6 +315,7 @@ function updateAdmin(system){
   adminRemoteCommit.textContent = `Senaste origin-version: ${system.remoteCommitShort || "--"}`;
   adminWorktree.textContent = `Lokala ändringar: ${system.worktreeClean ? "nej" : "ja"}`;
   updateButton.disabled = !system.updateAvailable || !system.worktreeClean;
+  updateKioskControls(kiosk);
 }
 
 async function loadAdminStatus(showProgress = false){
@@ -299,7 +329,7 @@ async function loadAdminStatus(showProgress = false){
       adminFeedback.textContent = data.error || "Kunde inte läsa systemstatus.";
       return;
     }
-    updateAdmin(data.system);
+    updateAdmin(data.system, data.kiosk);
     adminStatusLoaded = true;
     if(showProgress){
       adminFeedback.textContent = "Status uppdaterad.";
@@ -422,7 +452,7 @@ window.addEventListener("resize", () => snap(false));
 
 refreshStatusButton.addEventListener("click", () => loadAdminStatus(true));
 minimizeButton.addEventListener("click", () => runAdminAction("minimize"));
-closeButton.addEventListener("click", () => runAdminAction("close"));
+closeButton.addEventListener("click", () => runAdminAction(kioskEnabled ? "close" : "start"));
 updateButton.addEventListener("click", () => runAdminAction("update"));
 
 setInterval(updateState, 500);
