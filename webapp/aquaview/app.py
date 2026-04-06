@@ -7,6 +7,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from shutil import which
 
 from flask import Flask, jsonify, render_template, request
 import paho.mqtt.client as mqtt
@@ -28,7 +29,12 @@ AQUARIUM_TOPIC = os.environ.get("AQUAVIEW_AQUARIUM_TOPIC", "").strip()
 DISPLAY_ENV = os.environ.get("AQUAVIEW_DISPLAY", ":0")
 XAUTHORITY_ENV = os.environ.get("AQUAVIEW_XAUTHORITY", "/home/anton/.Xauthority")
 
-VIEW_NAMES = ["room", "aquarium", "cpu"]
+REPO_DIR = Path(__file__).resolve().parents[2]
+KIOSK_SERVICE_NAME = "aquaview-kiosk.service"
+APP_SERVICE_NAME = "aquaview.service"
+SENSOR_SERVICE_NAME = "aquabrain-sensors.service"
+
+VIEW_NAMES = ["room", "aquarium", "cpu", "admin"]
 
 
 @dataclass
@@ -48,6 +54,23 @@ def debug(message: str) -> None:
 
 def warn(message: str) -> None:
     print(f"[WARN] {message}", flush=True)
+
+
+def run_command(
+    command: list[str],
+    *,
+    check: bool = True,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    debug(f"Running command: {' '.join(command)}")
+    return subprocess.run(
+        command,
+        check=check,
+        cwd=REPO_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
 
 
 def parse_temperature_payload(payload: bytes) -> dict | None:
@@ -114,13 +137,142 @@ def set_screen_state(command: str) -> None:
     env["DISPLAY"] = DISPLAY_ENV
     env["XAUTHORITY"] = XAUTHORITY_ENV
     debug(f"Setting screen {command} via xset on display {DISPLAY_ENV}")
-    subprocess.run(
+    run_command(
         ["xset", "dpms", "force", command],
-        check=True,
         env=env,
-        capture_output=True,
-        text=True,
     )
+
+
+def short_commit(commit: str | None) -> str | None:
+    if not commit:
+        return None
+    return commit[:7]
+
+
+def git_output(*args: str) -> str:
+    result = run_command(["git", *args])
+    return result.stdout.strip()
+
+
+def get_git_status() -> dict:
+    branch = git_output("rev-parse", "--abbrev-ref", "HEAD")
+    local_commit = git_output("rev-parse", "HEAD")
+    worktree_clean = git_output("status", "--porcelain") == ""
+
+    try:
+        run_command(["git", "fetch", "--quiet", "origin", branch])
+        remote_commit = git_output("rev-parse", f"origin/{branch}")
+        merge_base = git_output("merge-base", "HEAD", f"origin/{branch}")
+    except subprocess.CalledProcessError as exc:
+        return {
+            "branch": branch,
+            "localCommit": local_commit,
+            "localCommitShort": short_commit(local_commit),
+            "remoteCommit": None,
+            "remoteCommitShort": None,
+            "worktreeClean": worktree_clean,
+            "updateAvailable": False,
+            "state": "unknown",
+            "summary": f"Kunde inte kontrollera origin/{branch}: {exc.stderr.strip() or exc}",
+        }
+
+    if local_commit == remote_commit:
+        status_state = "up-to-date"
+        summary = "Den här installationen är uppdaterad."
+        update_available = False
+    elif local_commit == merge_base:
+        status_state = "behind"
+        summary = "Det finns en nyare version på GitHub."
+        update_available = True
+    elif remote_commit == merge_base:
+        status_state = "ahead"
+        summary = "Den här installationen har lokala commits som inte finns på origin."
+        update_available = False
+    else:
+        status_state = "diverged"
+        summary = "Lokal branch och origin har divergerat."
+        update_available = False
+
+    if not worktree_clean:
+        summary = f"{summary} Arbetskatalogen har också lokala ändringar."
+
+    return {
+        "branch": branch,
+        "localCommit": local_commit,
+        "localCommitShort": short_commit(local_commit),
+        "remoteCommit": remote_commit,
+        "remoteCommitShort": short_commit(remote_commit),
+        "worktreeClean": worktree_clean,
+        "updateAvailable": update_available,
+        "state": status_state,
+        "summary": summary,
+    }
+
+
+def run_sudo_systemctl(*args: str) -> subprocess.CompletedProcess[str]:
+    return run_command(["sudo", "-n", "systemctl", *args])
+
+
+def minimize_kiosk() -> str:
+    env = os.environ.copy()
+    env["DISPLAY"] = DISPLAY_ENV
+    env["XAUTHORITY"] = XAUTHORITY_ENV
+
+    attempts: list[tuple[list[str], str]] = [
+        (["wlrctl", "toplevel", "minimize", "focused"], "wlrctl"),
+        (["xdotool", "getactivewindow", "windowminimize"], "xdotool"),
+    ]
+
+    for command, label in attempts:
+        if which(command[0]) is None:
+            continue
+        try:
+            run_command(command, env=env)
+            return f"Minimerade kioskfönstret via {label}."
+        except subprocess.CalledProcessError as exc:
+            warn(f"Failed to minimize kiosk with {label}: {exc.stderr.strip() or exc}")
+
+    raise RuntimeError(
+        "Ingen stödd metod hittades för att minimera Chromium på den här Pi:n."
+    )
+
+
+def close_kiosk() -> str:
+    run_sudo_systemctl("stop", KIOSK_SERVICE_NAME)
+    return "Kiosktjänsten stoppades."
+
+
+def restart_services_async() -> None:
+    def worker() -> None:
+        time.sleep(1)
+        try:
+            run_sudo_systemctl(
+                "restart",
+                SENSOR_SERVICE_NAME,
+                APP_SERVICE_NAME,
+                KIOSK_SERVICE_NAME,
+            )
+        except subprocess.CalledProcessError as exc:
+            warn(f"Failed to restart services after update: {exc.stderr.strip() or exc}")
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+
+def update_repo_and_restart() -> str:
+    git_status = get_git_status()
+    if not git_status["worktreeClean"]:
+        raise RuntimeError("Kan inte uppdatera eftersom arbetskatalogen har lokala ändringar.")
+
+    if git_status["state"] == "diverged":
+        raise RuntimeError("Kan inte köra git pull automatiskt när branchen har divergerat.")
+
+    if git_status["state"] == "ahead":
+        raise RuntimeError("Kan inte köra git pull eftersom lokala commits saknas på origin.")
+
+    run_command(["git", "pull", "--ff-only"])
+    restart_services_async()
+    return "Ny version neddragen. Tjänsterna startas om."
 
 
 def get_ordered_1wire_topics() -> list[str]:
@@ -285,6 +437,34 @@ def api_view():
 
     set_current_view(index)
     return jsonify({"ok": True})
+
+
+@app.get("/api/admin/status")
+def api_admin_status():
+    return jsonify({"ok": True, "system": get_git_status()})
+
+
+@app.post("/api/admin/action")
+def api_admin_action():
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action", "")).strip().lower()
+
+    try:
+        if action == "minimize":
+            message = minimize_kiosk()
+        elif action == "close":
+            message = close_kiosk()
+        elif action == "update":
+            message = update_repo_and_restart()
+        else:
+            return jsonify({"error": "invalid action"}), 400
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.strip() if exc.stderr else str(exc)
+        return jsonify({"ok": False, "error": stderr}), 500
+    except RuntimeError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    return jsonify({"ok": True, "message": message})
 
 
 mqtt_client = start_mqtt()

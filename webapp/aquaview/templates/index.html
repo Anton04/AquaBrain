@@ -14,6 +14,23 @@ html, body {
   font-family:system-ui,sans-serif;
 }
 
+body {
+  position:relative;
+}
+
+.clock {
+  position:absolute;
+  top:18px;
+  left:0;
+  right:0;
+  text-align:center;
+  font-size:28px;
+  font-variant-numeric:tabular-nums;
+  letter-spacing:.04em;
+  color:rgba(255,255,255,.9);
+  z-index:10;
+}
+
 .viewport {
   width:100vw;
   height:100vh;
@@ -46,9 +63,71 @@ html, body {
   text-align:center;
 }
 
+.admin-card {
+  background:#1a1a1a;
+  min-width:min(980px,94vw);
+  text-align:left;
+}
+
 .label { font-size:32px; opacity:.75; margin-bottom:12px; }
 .value { font-size:140px; font-variant-numeric:tabular-nums; }
 .sub   { margin-top:10px; font-size:18px; opacity:.55; }
+
+.admin-title {
+  font-size:34px;
+  margin:0 0 12px;
+}
+
+.admin-text {
+  font-size:20px;
+  line-height:1.45;
+  opacity:.86;
+}
+
+.admin-meta {
+  margin-top:20px;
+  padding:18px 20px;
+  border-radius:16px;
+  background:rgba(255,255,255,.06);
+}
+
+.admin-meta-row {
+  font-size:18px;
+  margin:8px 0;
+}
+
+.admin-actions {
+  display:flex;
+  gap:14px;
+  flex-wrap:wrap;
+  margin-top:22px;
+}
+
+.admin-button {
+  border:0;
+  border-radius:14px;
+  padding:16px 22px;
+  font-size:22px;
+  color:#fff;
+  cursor:pointer;
+}
+
+.admin-button:disabled {
+  opacity:.5;
+  cursor:default;
+}
+
+.admin-button.secondary { background:#4b5563; }
+.admin-button.danger { background:#7f1d1d; }
+.admin-button.primary { background:#0f766e; }
+.admin-button.info { background:#1d4ed8; }
+
+#adminFeedback {
+  margin-top:18px;
+  min-height:28px;
+  font-size:18px;
+  opacity:.82;
+}
 
 .dots {
   position:absolute;
@@ -71,6 +150,8 @@ html, body {
 </head>
 
 <body>
+
+<div class="clock" id="clockValue">--:--:--</div>
 
 <div class="viewport" id="viewport">
   <div class="track" id="track">
@@ -99,10 +180,31 @@ html, body {
       </div>
     </div>
 
+    <div class="page">
+      <div class="card admin-card">
+        <h2 class="admin-title">System</h2>
+        <div class="admin-text" id="adminSummary">Kontrollerar Git-status och kioskkontroller...</div>
+        <div class="admin-meta">
+          <div class="admin-meta-row" id="adminBranch">Branch: --</div>
+          <div class="admin-meta-row" id="adminLocalCommit">Installerad version: --</div>
+          <div class="admin-meta-row" id="adminRemoteCommit">Senaste origin-version: --</div>
+          <div class="admin-meta-row" id="adminWorktree">Lokala ändringar: --</div>
+        </div>
+        <div class="admin-actions">
+          <button class="admin-button info" id="refreshStatusButton">Kolla igen</button>
+          <button class="admin-button secondary" id="minimizeButton">Minimera</button>
+          <button class="admin-button danger" id="closeButton">Stäng kiosk</button>
+          <button class="admin-button primary" id="updateButton">Uppdatera nu</button>
+        </div>
+        <div id="adminFeedback"></div>
+      </div>
+    </div>
+
   </div>
 
   <div class="dots">
     <div class="dot active"></div>
+    <div class="dot"></div>
     <div class="dot"></div>
     <div class="dot"></div>
   </div>
@@ -112,20 +214,111 @@ html, body {
 const viewport = document.getElementById("viewport");
 const track = document.getElementById("track");
 const dots = Array.from(document.querySelectorAll(".dot"));
+const clockValue = document.getElementById("clockValue");
 
 let index = 0;
 let dragging = false;
 let startX = 0;
 let currentX = 0;
 let baseTranslate = 0;
-const pageCount = 3;
+const pageCount = 4;
+
+const adminSummary = document.getElementById("adminSummary");
+const adminBranch = document.getElementById("adminBranch");
+const adminLocalCommit = document.getElementById("adminLocalCommit");
+const adminRemoteCommit = document.getElementById("adminRemoteCommit");
+const adminWorktree = document.getElementById("adminWorktree");
+const adminFeedback = document.getElementById("adminFeedback");
+const refreshStatusButton = document.getElementById("refreshStatusButton");
+const minimizeButton = document.getElementById("minimizeButton");
+const closeButton = document.getElementById("closeButton");
+const updateButton = document.getElementById("updateButton");
+let adminStatusLoaded = false;
 
 function formatValue(value){
   return value === null || value === undefined ? "--" : `${value.toFixed(1)}°C`;
 }
 
+function updateClock(){
+  const now = new Date();
+  clockValue.textContent = now.toLocaleTimeString("sv-SE", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+}
+
 function setDots(){
   dots.forEach((d,i)=>d.classList.toggle("active",i===index));
+}
+
+function setAdminBusy(isBusy){
+  [refreshStatusButton, minimizeButton, closeButton, updateButton].forEach(button => {
+    button.disabled = isBusy;
+  });
+}
+
+function updateAdmin(system){
+  if(!system){
+    adminSummary.textContent = "Kunde inte läsa systemstatus.";
+    adminBranch.textContent = "Branch: --";
+    adminLocalCommit.textContent = "Installerad version: --";
+    adminRemoteCommit.textContent = "Senaste origin-version: --";
+    adminWorktree.textContent = "Lokala ändringar: --";
+    updateButton.disabled = true;
+    return;
+  }
+
+  adminSummary.textContent = system.summary || "Ingen systeminformation tillgänglig.";
+  adminBranch.textContent = `Branch: ${system.branch || "--"}`;
+  adminLocalCommit.textContent = `Installerad version: ${system.localCommitShort || "--"}`;
+  adminRemoteCommit.textContent = `Senaste origin-version: ${system.remoteCommitShort || "--"}`;
+  adminWorktree.textContent = `Lokala ändringar: ${system.worktreeClean ? "nej" : "ja"}`;
+  updateButton.disabled = !system.updateAvailable || !system.worktreeClean;
+}
+
+async function loadAdminStatus(showProgress = false){
+  if(showProgress){
+    adminFeedback.textContent = "Kontrollerar Git-status...";
+  }
+  try{
+    const response = await fetch("/api/admin/status", {cache:"no-store"});
+    const data = await response.json();
+    if(!response.ok || !data.ok){
+      adminFeedback.textContent = data.error || "Kunde inte läsa systemstatus.";
+      return;
+    }
+    updateAdmin(data.system);
+    adminStatusLoaded = true;
+    if(showProgress){
+      adminFeedback.textContent = "Status uppdaterad.";
+    }
+  }catch{
+    adminFeedback.textContent = "Kunde inte nå backend för Git-status.";
+  }
+}
+
+async function runAdminAction(action){
+  setAdminBusy(true);
+  adminFeedback.textContent = "Kör kommando...";
+  try{
+    const response = await fetch("/api/admin/action",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({action})
+    });
+    const data = await response.json();
+    if(!response.ok || !data.ok){
+      adminFeedback.textContent = data.error || "Kommandot misslyckades.";
+      return;
+    }
+    adminFeedback.textContent = data.message || "Klart.";
+  }catch{
+    adminFeedback.textContent = "Kunde inte nå backend.";
+  }finally{
+    setAdminBusy(false);
+    loadAdminStatus(false);
+  }
 }
 
 function snap(notify = false){
@@ -194,6 +387,10 @@ async function updateState(){
       index = data.currentView.index;
       snap(false);
     }
+
+    if(index === 3 && !adminStatusLoaded){
+      loadAdminStatus(true);
+    }
   }catch{
     document.getElementById("roomStatus").textContent = "Backend offline";
     document.getElementById("aquariumStatus").textContent = "Backend offline";
@@ -215,8 +412,15 @@ window.addEventListener("mouseup", up);
 
 window.addEventListener("resize", () => snap(false));
 
+refreshStatusButton.addEventListener("click", () => loadAdminStatus(true));
+minimizeButton.addEventListener("click", () => runAdminAction("minimize"));
+closeButton.addEventListener("click", () => runAdminAction("close"));
+updateButton.addEventListener("click", () => runAdminAction("update"));
+
 setInterval(updateState, 500);
+setInterval(updateClock, 1000);
 updateState();
+updateClock();
 snap(false);
 </script>
 </body>
