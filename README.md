@@ -39,6 +39,7 @@ This script:
 - installs and starts the sensor service
 - installs and starts the AquaView web app service
 - installs and starts the AquaView kiosk service
+- creates an `AquaBrain.desktop` launcher on the current user's desktop
 - checks the resulting `systemd` services
 
 ## Services
@@ -67,4 +68,5 @@ journalctl -u aquaview-kiosk.service -f
 python/server/             Sensor publisher and server-side install script
 webapp/aquaview/           AquaView Flask app, kiosk launcher, web install script
 install_aquabrain.sh       Top-level installer for the full system
+install_desktop_shortcut.sh Creates an AquaBrain desktop shortcut
 ```

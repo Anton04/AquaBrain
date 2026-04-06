@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SENSOR_INSTALL_SCRIPT="${REPO_DIR}/python/server/install_sensor_service.sh"
 AQUAVIEW_INSTALL_SCRIPT="${REPO_DIR}/webapp/aquaview/install_aquaview_services.sh"
+DESKTOP_SHORTCUT_INSTALL_SCRIPT="${REPO_DIR}/install_desktop_shortcut.sh"
 
 log() {
   printf '\n==> %s\n' "$1"
@@ -36,13 +37,15 @@ echo "This installer will:"
 echo "1. Verify that the component installers exist."
 echo "2. Run the sensor service installer."
 echo "3. Run the AquaView web app and kiosk installers."
-echo "4. Check that the systemd services were created and started."
-echo "5. Print useful follow-up commands if something needs attention."
+echo "4. Create an AquaBrain shortcut on the desktop."
+echo "5. Check that the systemd services were created and started."
+echo "6. Print useful follow-up commands if something needs attention."
 
 require_file "${SENSOR_INSTALL_SCRIPT}"
 require_file "${AQUAVIEW_INSTALL_SCRIPT}"
+require_file "${DESKTOP_SHORTCUT_INSTALL_SCRIPT}"
 
-chmod +x "${SENSOR_INSTALL_SCRIPT}" "${AQUAVIEW_INSTALL_SCRIPT}"
+chmod +x "${SENSOR_INSTALL_SCRIPT}" "${AQUAVIEW_INSTALL_SCRIPT}" "${DESKTOP_SHORTCUT_INSTALL_SCRIPT}"
 
 run_step \
   "Installing the MQTT sensor publisher service from python/server/install_sensor_service.sh" \
@@ -51,6 +54,10 @@ run_step \
 run_step \
   "Installing the AquaView web app and kiosk services from webapp/aquaview/install_aquaview_services.sh" \
   "${AQUAVIEW_INSTALL_SCRIPT}"
+
+run_step \
+  "Creating an AquaBrain desktop shortcut from install_desktop_shortcut.sh" \
+  "${DESKTOP_SHORTCUT_INSTALL_SCRIPT}"
 
 log "Running post-install checks"
 for service in aquabrain-sensors.service aquaview.service aquaview-kiosk.service; do
