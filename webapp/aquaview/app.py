@@ -49,6 +49,7 @@ class AppState:
     kiosk_enabled: bool = True
     kiosk_pid: int | None = None
     kiosk_pgid: int | None = None
+    view_sync_enabled: bool = True
 
 
 state = AppState()
@@ -291,6 +292,7 @@ def persist_kiosk_state() -> None:
             "enabled": state.kiosk_enabled,
             "pid": state.kiosk_pid,
             "pgid": state.kiosk_pgid,
+            "view_sync_enabled": state.view_sync_enabled,
         }
     KIOSK_STATE_PATH.write_text(json.dumps(payload, separators=(",", ":")))
 
@@ -323,6 +325,7 @@ def load_kiosk_state() -> None:
         state.kiosk_enabled = bool(payload.get("enabled", True))
         state.kiosk_pid = payload.get("pid")
         state.kiosk_pgid = payload.get("pgid")
+        state.view_sync_enabled = bool(payload.get("view_sync_enabled", True))
 
 
 def set_kiosk_enabled(enabled: bool) -> None:
@@ -330,6 +333,12 @@ def set_kiosk_enabled(enabled: bool) -> None:
         state.kiosk_enabled = enabled
     persist_kiosk_state()
     publish_kiosk_state()
+
+
+def set_view_sync_enabled(enabled: bool) -> None:
+    with state_lock:
+        state.view_sync_enabled = enabled
+    persist_kiosk_state()
 
 
 def record_kiosk_process(pid: int, pgid: int) -> None:
@@ -568,6 +577,10 @@ def publish_current_view(index: int) -> None:
     if mqtt_client is None:
         return
 
+    with state_lock:
+        if not state.view_sync_enabled:
+            return
+
     payload = json.dumps(
         {
             "time": int(time.time()),
@@ -584,6 +597,13 @@ def set_current_view(index: int) -> None:
     with state_lock:
         state.current_view_index = index
     publish_current_view(index)
+
+
+def build_settings_snapshot() -> dict:
+    with state_lock:
+        return {
+            "viewSyncEnabled": state.view_sync_enabled,
+        }
 
 
 def on_connect(client: mqtt.Client, _userdata, _flags, reason_code, _properties=None) -> None:
@@ -687,6 +707,7 @@ def api_state():
                 "name": VIEW_NAMES[current_view_index],
             },
             "kiosk": build_kiosk_snapshot(),
+            "settings": build_settings_snapshot(),
         }
     )
 
@@ -698,8 +719,14 @@ def api_view():
     if not isinstance(index, int) or not (0 <= index < len(VIEW_NAMES)):
         return jsonify({"error": "invalid view index"}), 400
 
+    with state_lock:
+        view_sync_enabled = state.view_sync_enabled
+
+    if not view_sync_enabled:
+        return jsonify({"ok": True, "viewSyncEnabled": False})
+
     set_current_view(index)
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "viewSyncEnabled": True})
 
 
 @app.get("/api/admin/status")
@@ -709,6 +736,7 @@ def api_admin_status():
             "ok": True,
             "system": get_git_status(),
             "kiosk": build_kiosk_snapshot(),
+            "settings": build_settings_snapshot(),
         }
     )
 
@@ -727,6 +755,16 @@ def api_admin_action():
             message = ensure_kiosk_running()
         elif action == "update":
             message = update_repo_and_restart()
+        elif action == "setviewsync":
+            enabled = payload.get("enabled")
+            if not isinstance(enabled, bool):
+                return jsonify({"error": "invalid enabled value"}), 400
+            set_view_sync_enabled(enabled)
+            message = (
+                "Vysynk aktiverad."
+                if enabled
+                else "Vysynk avstängd."
+            )
         else:
             return jsonify({"error": "invalid action"}), 400
     except subprocess.CalledProcessError as exc:

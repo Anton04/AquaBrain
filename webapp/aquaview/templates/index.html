@@ -108,6 +108,19 @@ body {
   margin-top:22px;
 }
 
+.admin-setting {
+  margin-top:18px;
+  display:flex;
+  align-items:center;
+  gap:12px;
+  font-size:20px;
+}
+
+.admin-setting input {
+  width:22px;
+  height:22px;
+}
+
 .admin-button {
   border:0;
   border-radius:14px;
@@ -199,6 +212,10 @@ body {
           <div class="admin-meta-row" id="adminWorktree">Lokala ändringar: --</div>
           <div class="admin-meta-row" id="adminKiosk">Kiosk: --</div>
         </div>
+        <label class="admin-setting">
+          <input type="checkbox" id="viewSyncToggle" checked>
+          <span>Synka vyer mellan kiosk och telefon</span>
+        </label>
         <div class="admin-actions">
           <button class="admin-button info" id="refreshStatusButton">Kolla igen</button>
           <button class="admin-button secondary" id="minimizeButton">Minimera</button>
@@ -243,8 +260,10 @@ const refreshStatusButton = document.getElementById("refreshStatusButton");
 const minimizeButton = document.getElementById("minimizeButton");
 const closeButton = document.getElementById("closeButton");
 const updateButton = document.getElementById("updateButton");
+const viewSyncToggle = document.getElementById("viewSyncToggle");
 let adminStatusLoaded = false;
 let kioskEnabled = true;
+let viewSyncEnabled = true;
 
 function formatValue(value){
   return value === null || value === undefined ? "--" : `${value.toFixed(1)}°C`;
@@ -270,6 +289,7 @@ function setAdminBusy(isBusy){
   [refreshStatusButton, minimizeButton, closeButton, updateButton].forEach(button => {
     button.disabled = isBusy;
   });
+  viewSyncToggle.disabled = isBusy;
 }
 
 function updateKioskControls(kiosk){
@@ -318,6 +338,11 @@ function updateAdmin(system, kiosk){
   updateKioskControls(kiosk);
 }
 
+function updateSettings(settings){
+  viewSyncEnabled = settings?.viewSyncEnabled !== false;
+  viewSyncToggle.checked = viewSyncEnabled;
+}
+
 async function loadAdminStatus(showProgress = false){
   if(showProgress){
     adminFeedback.textContent = "Kontrollerar Git-status...";
@@ -330,6 +355,7 @@ async function loadAdminStatus(showProgress = false){
       return;
     }
     updateAdmin(data.system, data.kiosk);
+    updateSettings(data.settings);
     adminStatusLoaded = true;
     if(showProgress){
       adminFeedback.textContent = "Status uppdaterad.";
@@ -362,6 +388,32 @@ async function runAdminAction(action){
   }
 }
 
+async function setViewSync(enabled){
+  setAdminBusy(true);
+  adminFeedback.textContent = "Sparar inställning...";
+  try{
+    const response = await fetch("/api/admin/action",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({action:"setviewsync", enabled})
+    });
+    const data = await response.json();
+    if(!response.ok || !data.ok){
+      viewSyncToggle.checked = !enabled;
+      adminFeedback.textContent = data.error || "Kunde inte spara inställningen.";
+      return;
+    }
+    viewSyncEnabled = enabled;
+    adminFeedback.textContent = data.message || "Inställningen sparades.";
+  }catch{
+    viewSyncToggle.checked = !enabled;
+    adminFeedback.textContent = "Kunde inte nå backend.";
+  }finally{
+    setAdminBusy(false);
+    loadAdminStatus(false);
+  }
+}
+
 function snap(notify = false){
   const w = window.innerWidth;
   track.style.transition = "transform 260ms ease";
@@ -373,6 +425,7 @@ function snap(notify = false){
 }
 
 async function publishCurrentView(){
+  if(!viewSyncEnabled) return;
   try{
     await fetch("/api/view",{
       method:"POST",
@@ -424,7 +477,9 @@ async function updateState(){
     document.getElementById("value3").textContent = formatValue(data.cpu.value);
     document.getElementById("cpuStatus").textContent = data.cpu.status;
 
-    if(!dragging && data.currentView && data.currentView.index !== index){
+    updateSettings(data.settings);
+
+    if(viewSyncEnabled && !dragging && data.currentView && data.currentView.index !== index){
       index = data.currentView.index;
       snap(false);
     }
@@ -454,6 +509,7 @@ refreshStatusButton.addEventListener("click", () => loadAdminStatus(true));
 minimizeButton.addEventListener("click", () => runAdminAction("minimize"));
 closeButton.addEventListener("click", () => runAdminAction(kioskEnabled ? "close" : "start"));
 updateButton.addEventListener("click", () => runAdminAction("update"));
+viewSyncToggle.addEventListener("change", () => setViewSync(viewSyncToggle.checked));
 
 setInterval(updateState, 500);
 setInterval(updateClock, 1000);
