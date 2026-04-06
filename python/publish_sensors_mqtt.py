@@ -34,14 +34,20 @@ FAMILY_NAMES = {
 }
 MIN_PUBLISH_INTERVAL_SECONDS = 3600.0
 MIN_TEMP_CHANGE_C = 0.125
-CPU_TEMP_TOPIC = "internal/cpu-temp"
+CPU_TEMP_TOPIC = "properties/cpu-temp"
 SCREEN_ACTIVE_TOPIC = "properties/screen_active"
 LAST_TOUCH_TIME_TOPIC = "properties/last_touch_time"
 SCREEN_POLL_INTERVAL_SECONDS = 0.5
 INPUT_EVENT_FORMAT = "llHHI"
 INPUT_EVENT_SIZE = struct.calcsize(INPUT_EVENT_FORMAT)
 EV_KEY = 0x01
+EV_ABS = 0x03
 BTN_TOUCH = 0x14A
+ABS_X = 0x00
+ABS_Y = 0x01
+ABS_MT_POSITION_X = 0x35
+ABS_MT_POSITION_Y = 0x36
+TOUCH_DEVICE_KEYWORDS = ("touch", "ft5x06", "goodix", "edt-ft5x06")
 
 
 @dataclass
@@ -158,7 +164,7 @@ def find_touch_device_paths() -> list[Path]:
     event_paths: list[Path] = []
     for block in blocks:
         lower_block = block.lower()
-        if "touch" not in lower_block:
+        if not any(keyword in lower_block for keyword in TOUCH_DEVICE_KEYWORDS):
             continue
 
         for line in block.splitlines():
@@ -242,9 +248,17 @@ def drain_touch_events(touch_monitor: TouchMonitor | None) -> int | None:
                 break
 
             sec, usec, event_type, code, value = struct.unpack(INPUT_EVENT_FORMAT, event)
-            if event_type == EV_KEY and code == BTN_TOUCH and value == 1:
+            is_touch_press = event_type == EV_KEY and code == BTN_TOUCH and value == 1
+            is_touch_position = (
+                event_type == EV_ABS
+                and code in (ABS_X, ABS_Y, ABS_MT_POSITION_X, ABS_MT_POSITION_Y)
+            )
+            if is_touch_press or is_touch_position:
                 latest_touch_time = sec
-                debug(f"Detected touch event at {sec}.{usec:06d}")
+                debug(
+                    f"Detected touch event at {sec}.{usec:06d} "
+                    f"(type={event_type}, code={code}, value={value})"
+                )
 
     return latest_touch_time
 
