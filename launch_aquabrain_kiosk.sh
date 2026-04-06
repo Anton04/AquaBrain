@@ -2,7 +2,6 @@
 set -euo pipefail
 
 BACKEND_START_URL="http://127.0.0.1:8100/api/kiosk/start"
-DIRECT_LAUNCH_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/webapp/aquaview/start_kiosk.sh"
 
 log() {
   printf '%s\n' "$1"
@@ -26,5 +25,5 @@ if start_via_backend; then
   exit 0
 fi
 
-log "Backend start failed; falling back to direct launcher."
-exec /bin/bash "${DIRECT_LAUNCH_SCRIPT}"
+log "Backend start failed. Check aquaview.service and try again."
+exit 1

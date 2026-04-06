@@ -39,7 +39,7 @@ cat >"${SHORTCUT_PATH}" <<EOF
 Version=1.0
 Type=Application
 Name=AquaBrain
-Comment=Start AquaView kiosk via the installed service
+Comment=Start AquaView kiosk via the AquaView backend service
 Exec=/bin/bash ${LAUNCH_SCRIPT}
 Icon=${ICON_TARGET_PATH}
 Terminal=false

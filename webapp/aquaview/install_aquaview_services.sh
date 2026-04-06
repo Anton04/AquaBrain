@@ -60,30 +60,15 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-sudo tee "${KIOSK_SERVICE_PATH}" >/dev/null <<EOF
-[Unit]
-Description=AquaView Chromium Kiosk
-After=graphical.target ${APP_SERVICE_NAME}
-Requires=${APP_SERVICE_NAME}
-
-[Service]
-Type=simple
-User=${CURRENT_USER}
-WorkingDirectory=${SCRIPT_DIR}
-Environment=DISPLAY=${DISPLAY_VALUE}
-Environment=XAUTHORITY=${XAUTHORITY_VALUE}
-ExecStart=/bin/bash ${KIOSK_PATH}
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=graphical.target
-EOF
+if [[ -f "${KIOSK_SERVICE_PATH}" ]]; then
+  sudo systemctl disable --now "${KIOSK_SERVICE_NAME}" >/dev/null 2>&1 || true
+  sudo rm -f "${KIOSK_SERVICE_PATH}"
+fi
 
 sudo systemctl daemon-reload
-sudo systemctl enable "${APP_SERVICE_NAME}" "${KIOSK_SERVICE_NAME}"
-sudo systemctl restart "${APP_SERVICE_NAME}" "${KIOSK_SERVICE_NAME}"
+sudo systemctl enable "${APP_SERVICE_NAME}"
+sudo systemctl restart "${APP_SERVICE_NAME}"
 
-echo "Installed and started ${APP_SERVICE_NAME} and ${KIOSK_SERVICE_NAME}"
+echo "Installed and started ${APP_SERVICE_NAME}"
+echo "Kiosk launch is now managed by ${APP_SERVICE_NAME}."
 echo "Check app status with: systemctl status ${APP_SERVICE_NAME}"
-echo "Check kiosk status with: systemctl status ${KIOSK_SERVICE_NAME}"

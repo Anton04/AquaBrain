@@ -37,7 +37,7 @@ echo "Repository directory: ${REPO_DIR}"
 echo "This installer will:"
 echo "1. Verify that the component installers exist."
 echo "2. Run the sensor service installer."
-echo "3. Run the AquaView web app and kiosk installers."
+echo "3. Run the AquaView web app installer."
 echo "4. Create an AquaBrain shortcut on the desktop."
 echo "5. Check that the systemd services were created and started."
 echo "6. Print useful follow-up commands if something needs attention."
@@ -54,7 +54,7 @@ run_step \
   "${SENSOR_INSTALL_SCRIPT}"
 
 run_step \
-  "Installing the AquaView web app and kiosk services from webapp/aquaview/install_aquaview_services.sh" \
+  "Installing the AquaView web app service from webapp/aquaview/install_aquaview_services.sh" \
   "${AQUAVIEW_INSTALL_SCRIPT}"
 
 run_step \
@@ -62,7 +62,7 @@ run_step \
   "${DESKTOP_SHORTCUT_INSTALL_SCRIPT}"
 
 log "Running post-install checks"
-for service in aquabrain-sensors.service aquaview.service aquaview-kiosk.service; do
+for service in aquabrain-sensors.service aquaview.service; do
   if systemctl is-enabled "${service}" >/dev/null 2>&1; then
     echo "${service}: enabled"
   else
@@ -78,14 +78,11 @@ done
 
 print_service_summary "aquabrain-sensors.service"
 print_service_summary "aquaview.service"
-print_service_summary "aquaview-kiosk.service"
 
 log "Installation finished"
-echo "If all three services show as active, AquaBrain is installed."
+echo "If both services show as active, AquaBrain is installed."
 echo "Useful commands:"
 echo "  systemctl status aquabrain-sensors.service"
 echo "  systemctl status aquaview.service"
-echo "  systemctl status aquaview-kiosk.service"
 echo "  journalctl -u aquabrain-sensors.service -f"
 echo "  journalctl -u aquaview.service -f"
-echo "  journalctl -u aquaview-kiosk.service -f"
