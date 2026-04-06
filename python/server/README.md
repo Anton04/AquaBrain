@@ -5,7 +5,7 @@
 Published topics:
 
 - `1wire/<sensor_type>/<sensor_id>`
-- `internal/cpu-temp`
+- `properties/cpu-temp`
 - `properties/screen_active`
 - `properties/last_touch_time`
 
@@ -51,13 +51,13 @@ pip install paho-mqtt
 Run manually:
 
 ```bash
-/home/anton/server/.venv/bin/python /home/anton/server/python/publish_sensors_mqtt.py
+/home/anton/server/.venv/bin/python /home/anton/server/python/server/publish_sensors_mqtt.py
 ```
 
 Adjust polling intervals if needed:
 
 ```bash
-/home/anton/server/.venv/bin/python /home/anton/server/python/publish_sensors_mqtt.py --screen-interval 0.5 --sensor-interval 5
+/home/anton/server/.venv/bin/python /home/anton/server/python/server/publish_sensors_mqtt.py --screen-interval 0.5 --sensor-interval 5
 ```
 
 ## Install As Service
@@ -66,8 +66,8 @@ Use the installation script:
 
 ```bash
 cd /home/anton/server
-chmod +x python/install_sensor_service.sh
-./python/install_sensor_service.sh
+chmod +x python/server/install_sensor_service.sh
+./python/server/install_sensor_service.sh
 ```
 
 This creates `aquabrain-sensors.service`, enables it at boot, and starts it immediately.

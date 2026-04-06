@@ -3,7 +3,7 @@ set -euo pipefail
 
 SERVICE_NAME="aquabrain-sensors.service"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PYTHON_BIN="${REPO_DIR}/.venv/bin/python"
 SCRIPT_PATH="${SCRIPT_DIR}/publish_sensors_mqtt.py"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
