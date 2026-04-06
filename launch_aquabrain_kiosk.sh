@@ -1,27 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-KIOSK_SERVICE_NAME="aquaview-kiosk.service"
+BACKEND_START_URL="http://127.0.0.1:8100/api/kiosk/start"
 DIRECT_LAUNCH_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/webapp/aquaview/start_kiosk.sh"
 
 log() {
   printf '%s\n' "$1"
 }
 
-restart_via_service() {
-  if command -v pkexec >/dev/null 2>&1; then
-    pkexec /bin/systemctl restart "${KIOSK_SERVICE_NAME}"
-    return 0
+start_via_backend() {
+  if ! command -v curl >/dev/null 2>&1; then
+    return 1
   fi
 
-  sudo systemctl restart "${KIOSK_SERVICE_NAME}"
+  curl \
+    --silent \
+    --show-error \
+    --fail \
+    -X POST \
+    "${BACKEND_START_URL}" >/dev/null
 }
 
-if systemctl list-unit-files "${KIOSK_SERVICE_NAME}" >/dev/null 2>&1; then
-  log "Starting AquaBrain kiosk via ${KIOSK_SERVICE_NAME}..."
-  restart_via_service
+if start_via_backend; then
+  log "Starting AquaBrain kiosk via the local web backend..."
   exit 0
 fi
 
-log "Kiosk service not installed; falling back to direct launcher."
+log "Backend start failed; falling back to direct launcher."
 exec /bin/bash "${DIRECT_LAUNCH_SCRIPT}"

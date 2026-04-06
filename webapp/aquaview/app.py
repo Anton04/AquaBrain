@@ -33,6 +33,9 @@ REPO_DIR = Path(__file__).resolve().parents[2]
 KIOSK_SERVICE_NAME = "aquaview-kiosk.service"
 APP_SERVICE_NAME = "aquaview.service"
 SENSOR_SERVICE_NAME = "aquabrain-sensors.service"
+KIOSK_LAUNCH_SCRIPT = REPO_DIR / "webapp/aquaview/start_kiosk.sh"
+KIOSK_PROFILE_DIR = "/tmp/chromium-aquaview"
+KIOSK_URL = "http://127.0.0.1:8100/"
 
 VIEW_NAMES = ["aquarium", "room", "cpu", "admin"]
 
@@ -213,6 +216,27 @@ def run_sudo_systemctl(*args: str) -> subprocess.CompletedProcess[str]:
     return run_command(["sudo", "-n", "systemctl", *args])
 
 
+def kill_processes(pattern: str) -> bool:
+    if not run_command(["pgrep", "-af", pattern], check=False).stdout.strip():
+        return False
+    run_command(["pkill", "-f", pattern], check=False)
+    return True
+
+
+def start_kiosk_direct() -> str:
+    if not KIOSK_LAUNCH_SCRIPT.exists():
+        raise RuntimeError(f"Kiosk script not found: {KIOSK_LAUNCH_SCRIPT}")
+
+    subprocess.Popen(
+        ["/bin/bash", str(KIOSK_LAUNCH_SCRIPT)],
+        cwd=REPO_DIR,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return "Kiosken startades."
+
+
 def minimize_kiosk() -> str:
     env = os.environ.copy()
     env["DISPLAY"] = DISPLAY_ENV
@@ -238,8 +262,26 @@ def minimize_kiosk() -> str:
 
 
 def close_kiosk() -> str:
-    run_sudo_systemctl("stop", KIOSK_SERVICE_NAME)
-    return "Kiosktjänsten stoppades."
+    messages: list[str] = []
+
+    try:
+        run_sudo_systemctl("stop", KIOSK_SERVICE_NAME)
+        messages.append("Kiosktjänsten stoppades.")
+    except subprocess.CalledProcessError as exc:
+        warn(f"Failed to stop kiosk service: {exc.stderr.strip() or exc}")
+
+    killed_any = False
+    killed_any |= kill_processes(str(KIOSK_LAUNCH_SCRIPT))
+    killed_any |= kill_processes(KIOSK_PROFILE_DIR)
+    killed_any |= kill_processes(KIOSK_URL)
+
+    if killed_any:
+        messages.append("Eventuella direktstartade kioskprocesser stoppades.")
+
+    if not messages:
+        raise RuntimeError("Kunde inte stoppa kiosken.")
+
+    return " ".join(messages)
 
 
 def restart_services_async() -> None:
@@ -454,6 +496,8 @@ def api_admin_action():
             message = minimize_kiosk()
         elif action == "close":
             message = close_kiosk()
+        elif action == "start":
+            message = start_kiosk_direct()
         elif action == "update":
             message = update_repo_and_restart()
         else:
@@ -461,6 +505,16 @@ def api_admin_action():
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.strip() if exc.stderr else str(exc)
         return jsonify({"ok": False, "error": stderr}), 500
+    except RuntimeError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    return jsonify({"ok": True, "message": message})
+
+
+@app.post("/api/kiosk/start")
+def api_kiosk_start():
+    try:
+        message = start_kiosk_direct()
     except RuntimeError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
 
