@@ -34,7 +34,7 @@ KIOSK_SERVICE_NAME = "aquaview-kiosk.service"
 APP_SERVICE_NAME = "aquaview.service"
 SENSOR_SERVICE_NAME = "aquabrain-sensors.service"
 
-VIEW_NAMES = ["room", "aquarium", "cpu", "admin"]
+VIEW_NAMES = ["aquarium", "room", "cpu", "admin"]
 
 
 @dataclass

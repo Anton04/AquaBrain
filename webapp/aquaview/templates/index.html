@@ -165,18 +165,18 @@ body {
   <div class="track" id="track">
 
     <div class="page">
-      <div class="card" style="background:#003300;">
-        <div class="label">Rum temp</div>
+      <div class="card" style="background:#001a33;">
+        <div class="label">Akvarium</div>
         <div class="value" id="value1">--</div>
-        <div class="sub" id="roomStatus">No MQTT source</div>
+        <div class="sub" id="aquariumStatus">No MQTT source</div>
       </div>
     </div>
 
     <div class="page">
-      <div class="card" style="background:#001a33;">
-        <div class="label">Akvarium</div>
+      <div class="card" style="background:#003300;">
+        <div class="label">Rum temp</div>
         <div class="value" id="value2">--</div>
-        <div class="sub" id="aquariumStatus">No MQTT source</div>
+        <div class="sub" id="roomStatus">No MQTT source</div>
       </div>
     </div>
 
@@ -382,11 +382,11 @@ async function updateState(){
     const response = await fetch("/api/state", {cache:"no-store"});
     const data = await response.json();
 
-    document.getElementById("value1").textContent = formatValue(data.room.value);
-    document.getElementById("roomStatus").textContent = data.room.status;
-
-    document.getElementById("value2").textContent = formatValue(data.aquarium.value);
+    document.getElementById("value1").textContent = formatValue(data.aquarium.value);
     document.getElementById("aquariumStatus").textContent = data.aquarium.status;
+
+    document.getElementById("value2").textContent = formatValue(data.room.value);
+    document.getElementById("roomStatus").textContent = data.room.status;
 
     document.getElementById("value3").textContent = formatValue(data.cpu.value);
     document.getElementById("cpuStatus").textContent = data.cpu.status;
@@ -400,8 +400,8 @@ async function updateState(){
       loadAdminStatus(true);
     }
   }catch{
-    document.getElementById("roomStatus").textContent = "Backend offline";
     document.getElementById("aquariumStatus").textContent = "Backend offline";
+    document.getElementById("roomStatus").textContent = "Backend offline";
     document.getElementById("cpuStatus").textContent = "Backend offline";
   }
 }
