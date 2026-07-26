@@ -11,6 +11,7 @@ The repository currently contains two main runtime parts:
   Displays the aquarium UI in a browser kiosk.
   Reads sensor values from MQTT through a local Flask backend.
   Publishes the current view and listens for MQTT commands to change view and control the screen.
+  Shows the fish feeder, schedule, counters, connection/clock warnings and manual feed control.
 
 ## Clone
 
@@ -69,3 +70,17 @@ install_aquabrain.sh       Top-level installer for the full system
 install_desktop_shortcut.sh Creates an AquaBrain desktop shortcut
 launch_aquabrain_kiosk.sh  Starts the kiosk through the AquaView backend
 ```
+
+## AquaView MQTT commands
+
+The AquaView backend listens on the local AquaBrain MQTT broker:
+
+| Topic | Payload | Purpose |
+|---|---|---|
+| `app/aquaview/commands/update` | Any non-retained payload | Pull the current branch with fast-forward only and restart AquaBrain |
+| `app/aquaview/properties/update-result` | JSON | Retained result from the latest MQTT update request |
+| `app/aquaview/events/manual-feed-requested` | JSON | Audit event for every manual-feed button request |
+
+The update command refuses to run if the worktree is dirty, the local branch is
+ahead of origin, or the branches have diverged. Never publish the update command
+as a retained MQTT message.

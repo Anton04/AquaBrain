@@ -3,7 +3,6 @@ set -euo pipefail
 
 SENSOR_SERVICE_NAME="aquabrain-sensors.service"
 APP_SERVICE_NAME="aquaview.service"
-KIOSK_SERVICE_NAME="aquaview-kiosk.service"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "AquaBrain update"
@@ -19,12 +18,13 @@ echo
 echo "Restarting services..."
 sudo systemctl restart \
   "${SENSOR_SERVICE_NAME}" \
-  "${APP_SERVICE_NAME}" \
-  "${KIOSK_SERVICE_NAME}"
+  "${APP_SERVICE_NAME}"
+echo
+
+echo "The AquaView service also restarts its managed Chromium kiosk."
 echo
 
 echo "Current service status:"
 systemctl --no-pager --full status \
   "${SENSOR_SERVICE_NAME}" \
-  "${APP_SERVICE_NAME}" \
-  "${KIOSK_SERVICE_NAME}" || true
+  "${APP_SERVICE_NAME}" || true

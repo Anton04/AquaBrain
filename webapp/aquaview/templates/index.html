@@ -78,6 +78,124 @@ body {
 .value { font-size:140px; font-variant-numeric:tabular-nums; }
 .sub   { margin-top:10px; font-size:18px; opacity:.55; }
 
+.feeder-card {
+  box-sizing:border-box;
+  width:min(980px,94vw);
+  min-height:min(410px,84vh);
+  padding:24px 30px;
+  background:linear-gradient(145deg,#102b38,#07161e);
+  border:1px solid rgba(111,211,230,.22);
+  text-align:left;
+}
+
+.feeder-layout {
+  display:grid;
+  grid-template-columns:minmax(180px,32%) 1fr;
+  gap:30px;
+  align-items:center;
+}
+
+.feeder-visual {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  height:300px;
+}
+
+.feeder-image {
+  max-width:100%;
+  max-height:100%;
+  object-fit:contain;
+  filter:drop-shadow(0 18px 20px rgba(0,0,0,.45));
+}
+
+.feeder-heading {
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-bottom:8px;
+}
+
+.feeder-heading h2 {
+  margin:0;
+  font-size:34px;
+}
+
+.status-pill {
+  padding:6px 11px;
+  border-radius:999px;
+  background:#164e3f;
+  color:#a7f3d0;
+  font-size:15px;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+}
+
+.status-pill.offline {
+  background:#4c1d1d;
+  color:#fecaca;
+}
+
+.feeder-warning {
+  display:none;
+  align-items:center;
+  gap:10px;
+  margin:9px 0;
+  padding:9px 12px;
+  border-radius:11px;
+  background:rgba(180,83,9,.24);
+  color:#fde68a;
+  font-size:17px;
+}
+
+.feeder-warning.visible { display:flex; }
+.warning-icon { font-size:23px; }
+
+.countdown-label {
+  margin-top:12px;
+  color:rgba(255,255,255,.62);
+  font-size:16px;
+}
+
+.countdown {
+  margin:2px 0 10px;
+  font-size:42px;
+  line-height:1.05;
+  font-variant-numeric:tabular-nums;
+}
+
+.schedule-line,
+.counter-line {
+  margin-top:7px;
+  color:rgba(255,255,255,.72);
+  font-size:17px;
+}
+
+.feed-button {
+  margin-top:18px;
+  min-width:230px;
+  border:0;
+  border-radius:15px;
+  padding:15px 22px;
+  background:#0891b2;
+  color:white;
+  font-size:22px;
+  font-weight:650;
+  cursor:pointer;
+}
+
+.feed-button:disabled {
+  opacity:.45;
+  cursor:default;
+}
+
+.feed-feedback {
+  display:inline-block;
+  margin-left:14px;
+  font-size:16px;
+  color:rgba(255,255,255,.72);
+}
+
 .admin-title {
   font-size:34px;
   margin:0 0 12px;
@@ -164,6 +282,16 @@ body {
 .dot.active {
   background:rgba(255,255,255,.9);
 }
+
+@media (max-width:700px), (max-height:520px) {
+  .feeder-card { min-height:0; padding:18px 24px; }
+  .feeder-layout { grid-template-columns:170px 1fr; gap:22px; }
+  .feeder-visual { height:300px; }
+  .feeder-heading h2 { font-size:28px; }
+  .countdown { font-size:34px; }
+  .feeder-warning { margin:6px 0; padding:7px 10px; font-size:15px; }
+  .feed-button { margin-top:12px; padding:12px 18px; font-size:19px; }
+}
 </style>
 </head>
 
@@ -202,6 +330,36 @@ body {
     </div>
 
     <div class="page">
+      <div class="card feeder-card">
+        <div class="feeder-layout">
+          <div class="feeder-visual">
+            <img class="feeder-image" src="/assets/fish%20feeder.png" alt="Fiskmatare">
+          </div>
+          <div>
+            <div class="feeder-heading">
+              <h2>Fiskmatare</h2>
+              <span class="status-pill offline" id="feederStatus">Okänd</span>
+            </div>
+            <div class="feeder-warning" id="feederConnectionWarning">
+              <span class="warning-icon">⚠</span>
+              <span>Fiskmataren är inte uppkopplad</span>
+            </div>
+            <div class="feeder-warning" id="feederClockWarning">
+              <span class="warning-icon">⚠</span>
+              <span id="feederClockWarningText">Fiskmataren har fel tid</span>
+            </div>
+            <div class="countdown-label">Nästa schemalagda matning</div>
+            <div class="countdown" id="feederCountdown">--:--</div>
+            <div class="schedule-line" id="feederSchedule">Schema: väntar på data</div>
+            <div class="counter-line" id="feederCounters">Matningar idag: --</div>
+            <button class="feed-button" id="feedButton" disabled>Mata nu · 1 dos</button>
+            <span class="feed-feedback" id="feedFeedback"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="page">
       <div class="card admin-card">
         <h2 class="admin-title">System</h2>
         <div class="admin-text" id="adminSummary">Kontrollerar Git-status och kioskkontroller...</div>
@@ -233,6 +391,7 @@ body {
     <div class="dot"></div>
     <div class="dot"></div>
     <div class="dot"></div>
+    <div class="dot"></div>
   </div>
 </div>
 
@@ -247,7 +406,7 @@ let dragging = false;
 let startX = 0;
 let currentX = 0;
 let baseTranslate = 0;
-const pageCount = 4;
+const pageCount = 5;
 
 const adminSummary = document.getElementById("adminSummary");
 const adminBranch = document.getElementById("adminBranch");
@@ -261,9 +420,19 @@ const minimizeButton = document.getElementById("minimizeButton");
 const closeButton = document.getElementById("closeButton");
 const updateButton = document.getElementById("updateButton");
 const viewSyncToggle = document.getElementById("viewSyncToggle");
+const feederStatus = document.getElementById("feederStatus");
+const feederConnectionWarning = document.getElementById("feederConnectionWarning");
+const feederClockWarning = document.getElementById("feederClockWarning");
+const feederClockWarningText = document.getElementById("feederClockWarningText");
+const feederCountdown = document.getElementById("feederCountdown");
+const feederSchedule = document.getElementById("feederSchedule");
+const feederCounters = document.getElementById("feederCounters");
+const feedButton = document.getElementById("feedButton");
+const feedFeedback = document.getElementById("feedFeedback");
 let adminStatusLoaded = false;
 let kioskEnabled = true;
 let viewSyncEnabled = true;
+let lastForcedViewVersion = 0;
 
 function formatValue(value){
   return value === null || value === undefined ? "--" : `${value.toFixed(1)}°C`;
@@ -275,6 +444,77 @@ function updateClock(){
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function formatCountdown(seconds){
+  if(seconds === null || seconds === undefined) return "--:--";
+  const total = Math.max(0, Number(seconds));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = Math.floor(total % 60);
+  if(days > 0) return `${days} d ${String(hours).padStart(2,"0")}:${String(minutes).padStart(2,"0")}:${String(secs).padStart(2,"0")}`;
+  return `${String(hours).padStart(2,"0")}:${String(minutes).padStart(2,"0")}:${String(secs).padStart(2,"0")}`;
+}
+
+function updateFeeder(feeder){
+  if(!feeder) return;
+  const statusNames = {
+    idle:"Redo",
+    feeding:"Matar",
+    booting:"Startar",
+    restarting:"Startar om",
+    offline:"Offline",
+    unknown:"Okänd"
+  };
+  feederStatus.textContent = statusNames[feeder.status] || feeder.status;
+  feederStatus.classList.toggle("offline", !feeder.connected);
+  feederConnectionWarning.classList.toggle("visible", !feeder.connected);
+
+  const showClockWarning = feeder.connected && !feeder.clockOk;
+  feederClockWarning.classList.toggle("visible", showClockWarning);
+  if(showClockWarning){
+    const offset = feeder.clockOffsetSeconds;
+    feederClockWarningText.textContent = offset === null
+      ? "Fiskmataren rapporterar ingen giltig tid"
+      : `Fiskmatarens tid avviker med ${Math.abs(offset)} sekunder`;
+  }
+
+  feederCountdown.textContent = formatCountdown(feeder.countdown);
+
+  const feedings = feeder.schedule?.feedings;
+  if(Array.isArray(feedings)){
+    const enabled = feedings.filter(item => item.enabled !== false);
+    feederSchedule.textContent = enabled.length
+      ? `Schema: ${enabled.map(item => `${item.time_of_the_day} · ${item.doses} dos${item.doses === 1 ? "" : "er"}`).join("  |  ")}`
+      : "Schema: inga aktiva matningar";
+  }else{
+    feederSchedule.textContent = "Schema: väntar på data";
+  }
+
+  const daily = feeder.counters?.daily;
+  const weekly = feeder.counters?.weekly;
+  feederCounters.textContent = daily === undefined
+    ? "Matningar idag: --"
+    : `Doser idag: ${daily} · denna vecka: ${weekly ?? "--"}`;
+  feedButton.disabled = !feeder.canFeed;
+}
+
+async function feedNow(){
+  feedButton.disabled = true;
+  feedFeedback.textContent = "Skickar...";
+  try{
+    const response = await fetch("/api/feeder/feed", {method:"POST"});
+    const data = await response.json();
+    feedFeedback.textContent = response.ok && data.ok
+      ? (data.message || "Matning beställd.")
+      : (data.error || "Matningen kunde inte startas.");
+  }catch{
+    feedFeedback.textContent = "Kunde inte nå backend.";
+  }finally{
+    setTimeout(() => { feedFeedback.textContent = ""; }, 5000);
+    updateState();
+  }
 }
 
 function setDots(){
@@ -477,14 +717,20 @@ async function updateState(){
     document.getElementById("value3").textContent = formatValue(data.cpu.value);
     document.getElementById("cpuStatus").textContent = data.cpu.status;
 
+    updateFeeder(data.feeder);
     updateSettings(data.settings);
 
-    if(viewSyncEnabled && !dragging && data.currentView && data.currentView.index !== index){
+    const forceVersion = Number(data.currentView?.forceVersion || 0);
+    const isForcedView = forceVersion > 0 && forceVersion !== lastForcedViewVersion;
+    if(isForcedView){
+      lastForcedViewVersion = forceVersion;
+    }
+    if(!dragging && data.currentView && (isForcedView || viewSyncEnabled) && data.currentView.index !== index){
       index = data.currentView.index;
       snap(false);
     }
 
-    if(index === 3 && !adminStatusLoaded){
+    if(index === 4 && !adminStatusLoaded){
       loadAdminStatus(true);
     }
   }catch{
@@ -510,6 +756,7 @@ minimizeButton.addEventListener("click", () => runAdminAction("minimize"));
 closeButton.addEventListener("click", () => runAdminAction(kioskEnabled ? "close" : "start"));
 updateButton.addEventListener("click", () => runAdminAction("update"));
 viewSyncToggle.addEventListener("change", () => setViewSync(viewSyncToggle.checked));
+feedButton.addEventListener("click", feedNow);
 
 setInterval(updateState, 500);
 setInterval(updateClock, 1000);

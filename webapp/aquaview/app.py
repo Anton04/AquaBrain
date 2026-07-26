@@ -7,10 +7,11 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from shutil import which
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_from_directory
 import paho.mqtt.client as mqtt
 
 app = Flask(__name__)
@@ -24,22 +25,37 @@ KIOSK_PROPERTY_TOPIC = f"{BASE_TOPIC}/properties/kiosk"
 VIEW_COMMAND_TOPIC = f"{BASE_TOPIC}/commands/view/set"
 SCREEN_COMMAND_TOPIC = f"{BASE_TOPIC}/commands/screen/set"
 KIOSK_COMMAND_TOPIC = f"{BASE_TOPIC}/commands/kiosk/set"
+UPDATE_COMMAND_TOPIC = f"{BASE_TOPIC}/commands/update"
+UPDATE_RESULT_TOPIC = f"{BASE_TOPIC}/properties/update-result"
+MANUAL_FEED_EVENT_TOPIC = f"{BASE_TOPIC}/events/manual-feed-requested"
 
 CPU_TOPIC = os.environ.get("AQUAVIEW_CPU_TOPIC", "properties/cpu-temp")
 ROOM_TOPIC = os.environ.get("AQUAVIEW_ROOM_TOPIC", "").strip()
 AQUARIUM_TOPIC = os.environ.get("AQUAVIEW_AQUARIUM_TOPIC", "").strip()
+FEEDER_DEVICE_ID = os.environ.get(
+    "AQUAVIEW_FEEDER_DEVICE_ID", "fishfeeder-c78f"
+).strip()
+FEEDER_BASE_TOPIC = f"devices/{FEEDER_DEVICE_ID}"
+FEEDER_STALE_SECONDS = float(
+    os.environ.get("AQUAVIEW_FEEDER_STALE_SECONDS", "150")
+)
+FEEDER_CLOCK_TOLERANCE_SECONDS = float(
+    os.environ.get("AQUAVIEW_FEEDER_CLOCK_TOLERANCE_SECONDS", "120")
+)
 
 DISPLAY_ENV = os.environ.get("AQUAVIEW_DISPLAY", ":0")
 XAUTHORITY_ENV = os.environ.get("AQUAVIEW_XAUTHORITY", "/home/anton/.Xauthority")
 
 REPO_DIR = Path(__file__).resolve().parents[2]
+ASSETS_DIR = REPO_DIR / "assets"
 APP_SERVICE_NAME = "aquaview.service"
 SENSOR_SERVICE_NAME = "aquabrain-sensors.service"
 KIOSK_LAUNCH_SCRIPT = REPO_DIR / "webapp/aquaview/start_kiosk.sh"
 KIOSK_STATE_PATH = REPO_DIR / ".aquaview-kiosk-state.json"
 KIOSK_WATCHDOG_INTERVAL_SECONDS = 60.0
 
-VIEW_NAMES = ["aquarium", "room", "cpu", "admin"]
+VIEW_NAMES = ["aquarium", "room", "cpu", "feeder", "admin"]
+FEEDER_VIEW_INDEX = VIEW_NAMES.index("feeder")
 
 
 @dataclass
@@ -50,12 +66,19 @@ class AppState:
     kiosk_pid: int | None = None
     kiosk_pgid: int | None = None
     view_sync_enabled: bool = True
+    forced_view_version: int = 0
+    feeder_values: dict[str, object] = field(default_factory=dict)
+    feeder_last_seen: float | None = None
+    feeder_clock_offset_seconds: float | None = None
+    feeder_countdown_target: float | None = None
+    feeder_countdown_active: bool = False
 
 
 state = AppState()
 state_lock = threading.Lock()
 kiosk_control_lock = threading.Lock()
 mqtt_client: mqtt.Client | None = None
+update_lock = threading.Lock()
 
 
 def debug(message: str) -> None:
@@ -93,6 +116,55 @@ def parse_temperature_payload(payload: bytes) -> dict | None:
         return None
 
     return data
+
+
+def decode_feeder_payload(property_name: str, payload: bytes) -> object:
+    text = payload.decode("utf-8", errors="replace").strip()
+    if property_name in {"schedule.json", "feed_counters.json", "feed_log"}:
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return text
+    if property_name == "countdown":
+        if text == "null":
+            return None
+        try:
+            return int(text)
+        except ValueError:
+            return None
+    if property_name == "boottime":
+        try:
+            return int(text)
+        except ValueError:
+            return text
+    return text
+
+
+def record_feeder_property(property_name: str, payload: bytes) -> None:
+    received_at = time.time()
+    value = decode_feeder_payload(property_name, payload)
+
+    with state_lock:
+        state.feeder_values[property_name] = value
+        state.feeder_last_seen = received_at
+
+        if property_name == "localtime":
+            try:
+                feeder_time = datetime.strptime(
+                    str(value), "%Y-%m-%d %H:%M:%S"
+                ).timestamp()
+                state.feeder_clock_offset_seconds = feeder_time - received_at
+            except (ValueError, OSError):
+                state.feeder_clock_offset_seconds = None
+
+        if property_name == "countdown":
+            if isinstance(value, int) and value >= 0:
+                state.feeder_countdown_target = received_at + value
+                if value > 60:
+                    state.feeder_countdown_active = False
+            else:
+                state.feeder_countdown_target = None
+                state.feeder_countdown_active = False
 
 
 def parse_view_command(payload: bytes) -> int | None:
@@ -530,6 +602,42 @@ def update_repo_and_restart() -> str:
     return "Ny version neddragen. Tjänsterna startas om."
 
 
+def publish_update_result(*, ok: bool, message: str) -> None:
+    if mqtt_client is None:
+        return
+    mqtt_client.publish(
+        UPDATE_RESULT_TOPIC,
+        payload=json.dumps(
+            {"time": int(time.time()), "ok": ok, "message": message},
+            separators=(",", ":"),
+        ),
+        qos=0,
+        retain=True,
+    )
+
+
+def update_from_mqtt_async() -> None:
+    def worker() -> None:
+        if not update_lock.acquire(blocking=False):
+            publish_update_result(ok=False, message="En uppdatering pågår redan.")
+            return
+        try:
+            message = update_repo_and_restart()
+            publish_update_result(ok=True, message=message)
+        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            error_message = (
+                exc.stderr.strip()
+                if isinstance(exc, subprocess.CalledProcessError) and exc.stderr
+                else str(exc)
+            )
+            warn(f"MQTT update failed: {error_message}")
+            publish_update_result(ok=False, message=error_message)
+        finally:
+            update_lock.release()
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
 def get_ordered_1wire_topics() -> list[str]:
     with state_lock:
         topics = sorted(topic for topic in state.sensor_values if topic.startswith("1wire/"))
@@ -573,6 +681,51 @@ def build_metric(topic: str | None, fallback_status: str) -> dict:
     }
 
 
+def build_feeder_snapshot() -> dict:
+    now = time.time()
+    with state_lock:
+        values = dict(state.feeder_values)
+        last_seen = state.feeder_last_seen
+        clock_offset = state.feeder_clock_offset_seconds
+        countdown_target = state.feeder_countdown_target
+
+    message_age = None if last_seen is None else max(0, now - last_seen)
+    status = str(values.get("status") or "unknown").lower()
+    connected = (
+        message_age is not None
+        and message_age <= FEEDER_STALE_SECONDS
+        and status != "offline"
+    )
+    clock_ok = (
+        clock_offset is not None
+        and abs(clock_offset) <= FEEDER_CLOCK_TOLERANCE_SECONDS
+    )
+    countdown = (
+        None
+        if countdown_target is None
+        else max(0, int(countdown_target - now + 0.999))
+    )
+
+    return {
+        "deviceId": FEEDER_DEVICE_ID,
+        "connected": connected,
+        "status": status,
+        "lastSeenSeconds": (
+            None if message_age is None else int(message_age)
+        ),
+        "localtime": values.get("localtime"),
+        "clockOk": clock_ok,
+        "clockOffsetSeconds": (
+            None if clock_offset is None else round(clock_offset)
+        ),
+        "countdown": countdown,
+        "schedule": values.get("schedule.json"),
+        "counters": values.get("feed_counters.json"),
+        "lastError": values.get("last_error"),
+        "canFeed": connected and status == "idle",
+    }
+
+
 def publish_current_view(index: int) -> None:
     if mqtt_client is None:
         return
@@ -599,6 +752,47 @@ def set_current_view(index: int) -> None:
     publish_current_view(index)
 
 
+def force_current_view(index: int) -> None:
+    with state_lock:
+        state.current_view_index = index
+        state.forced_view_version += 1
+    publish_current_view(index)
+
+
+def check_feeder_schedule() -> bool:
+    should_activate = False
+    with state_lock:
+        target = state.feeder_countdown_target
+        remaining = None if target is None else target - time.time()
+        if (
+            remaining is not None
+            and 0 < remaining <= 60
+            and not state.feeder_countdown_active
+        ):
+            state.feeder_countdown_active = True
+            should_activate = True
+        elif remaining is None or remaining <= -5 or remaining > 60:
+            state.feeder_countdown_active = False
+
+    if should_activate:
+        debug("Scheduled feeding is within 60 seconds; waking screen and opening feeder view")
+        try:
+            set_screen_state("on")
+        except (OSError, subprocess.CalledProcessError) as exc:
+            warn(f"Failed to wake screen before scheduled feeding: {exc}")
+        force_current_view(FEEDER_VIEW_INDEX)
+    return should_activate
+
+
+def start_feeder_schedule_watchdog() -> None:
+    def worker() -> None:
+        while True:
+            check_feeder_schedule()
+            time.sleep(1)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
 def build_settings_snapshot() -> dict:
     with state_lock:
         return {
@@ -614,6 +808,8 @@ def on_connect(client: mqtt.Client, _userdata, _flags, reason_code, _properties=
         (VIEW_COMMAND_TOPIC, 0),
         (SCREEN_COMMAND_TOPIC, 0),
         (KIOSK_COMMAND_TOPIC, 0),
+        (UPDATE_COMMAND_TOPIC, 0),
+        (f"{FEEDER_BASE_TOPIC}/properties/#", 0),
     ]
     if ROOM_TOPIC:
         subscriptions.append((ROOM_TOPIC, 0))
@@ -662,6 +858,20 @@ def on_message(_client: mqtt.Client, _userdata, message: mqtt.MQTTMessage) -> No
             warn(f"Failed to apply kiosk command: {exc}")
         return
 
+    if topic == UPDATE_COMMAND_TOPIC:
+        if message.retain:
+            warn("Ignoring retained code update command")
+            return
+        debug("Code update requested over MQTT")
+        update_from_mqtt_async()
+        return
+
+    feeder_property_prefix = f"{FEEDER_BASE_TOPIC}/properties/"
+    if topic.startswith(feeder_property_prefix):
+        property_name = topic.removeprefix(feeder_property_prefix)
+        record_feeder_property(property_name, payload)
+        return
+
     parsed = parse_temperature_payload(payload)
     if parsed is None:
         return
@@ -685,6 +895,11 @@ def index():
     return render_template("index.html")
 
 
+@app.get("/assets/<path:filename>")
+def assets(filename: str):
+    return send_from_directory(ASSETS_DIR, filename)
+
+
 @app.get("/api/state")
 def api_state():
     room_topic = resolve_room_topic()
@@ -696,6 +911,7 @@ def api_state():
 
     with state_lock:
         current_view_index = state.current_view_index
+        forced_view_version = state.forced_view_version
 
     return jsonify(
         {
@@ -705,11 +921,59 @@ def api_state():
             "currentView": {
                 "index": current_view_index,
                 "name": VIEW_NAMES[current_view_index],
+                "forceVersion": forced_view_version,
             },
+            "feeder": build_feeder_snapshot(),
             "kiosk": build_kiosk_snapshot(),
             "settings": build_settings_snapshot(),
         }
     )
+
+
+@app.post("/api/feeder/feed")
+def api_feeder_feed():
+    feeder = build_feeder_snapshot()
+    accepted = bool(feeder["canFeed"])
+    reason = None
+    if not feeder["connected"]:
+        reason = "Fiskmataren är inte uppkopplad."
+    elif feeder["status"] != "idle":
+        reason = f"Fiskmataren är inte redo (status: {feeder['status']})."
+
+    event_payload = json.dumps(
+        {
+            "time": int(time.time()),
+            "device": FEEDER_DEVICE_ID,
+            "doses": 1,
+            "source": "aquaview-button",
+            "accepted": accepted,
+            "reason": reason,
+        },
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    if mqtt_client is None or not mqtt_client.is_connected():
+        return jsonify({"ok": False, "error": "MQTT-brokern är inte ansluten."}), 503
+
+    mqtt_client.publish(
+        MANUAL_FEED_EVENT_TOPIC,
+        payload=event_payload,
+        qos=0,
+        retain=False,
+    )
+    if not accepted:
+        return jsonify({"ok": False, "error": reason}), 409
+
+    result = mqtt_client.publish(
+        f"{FEEDER_BASE_TOPIC}/commands/feed",
+        payload="1",
+        qos=0,
+        retain=False,
+    )
+    if result.rc != mqtt.MQTT_ERR_SUCCESS:
+        return jsonify({"ok": False, "error": "Matningskommandot kunde inte publiceras."}), 503
+
+    return jsonify({"ok": True, "message": "En dos har beställts."})
 
 
 @app.post("/api/view")
@@ -796,9 +1060,11 @@ def api_kiosk_stop():
     return jsonify({"ok": True, "message": message})
 
 
-load_kiosk_state()
-mqtt_client = start_mqtt()
-start_kiosk_watchdog()
+if os.environ.get("AQUAVIEW_DISABLE_RUNTIME") != "1":
+    load_kiosk_state()
+    mqtt_client = start_mqtt()
+    start_kiosk_watchdog()
+    start_feeder_schedule_watchdog()
 
 
 if __name__ == "__main__":
