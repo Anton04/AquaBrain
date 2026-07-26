@@ -51,7 +51,13 @@ ASSETS_DIR = REPO_DIR / "assets"
 APP_SERVICE_NAME = "aquaview.service"
 SENSOR_SERVICE_NAME = "aquabrain-sensors.service"
 KIOSK_LAUNCH_SCRIPT = REPO_DIR / "webapp/aquaview/start_kiosk.sh"
-KIOSK_STATE_PATH = REPO_DIR / ".aquaview-kiosk-state.json"
+KIOSK_STATE_PATH = Path(
+    os.environ.get(
+        "AQUAVIEW_KIOSK_STATE_PATH",
+        "~/.local/state/aquabrain/aquaview-kiosk-state.json",
+    )
+).expanduser()
+LEGACY_KIOSK_STATE_PATH = REPO_DIR / ".aquaview-kiosk-state.json"
 KIOSK_WATCHDOG_INTERVAL_SECONDS = 60.0
 
 VIEW_NAMES = ["aquarium", "room", "cpu", "feeder", "admin"]
@@ -366,6 +372,7 @@ def persist_kiosk_state() -> None:
             "pgid": state.kiosk_pgid,
             "view_sync_enabled": state.view_sync_enabled,
         }
+    KIOSK_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     KIOSK_STATE_PATH.write_text(json.dumps(payload, separators=(",", ":")))
 
 
@@ -382,12 +389,16 @@ def publish_kiosk_state() -> None:
 
 
 def load_kiosk_state() -> None:
-    if not KIOSK_STATE_PATH.exists():
+    source_path = KIOSK_STATE_PATH
+    if not source_path.exists() and LEGACY_KIOSK_STATE_PATH.exists():
+        source_path = LEGACY_KIOSK_STATE_PATH
+
+    if not source_path.exists():
         persist_kiosk_state()
         return
 
     try:
-        payload = json.loads(KIOSK_STATE_PATH.read_text())
+        payload = json.loads(source_path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
         warn(f"Failed to load kiosk state: {exc}")
         persist_kiosk_state()
@@ -398,6 +409,9 @@ def load_kiosk_state() -> None:
         state.kiosk_pid = payload.get("pid")
         state.kiosk_pgid = payload.get("pgid")
         state.view_sync_enabled = bool(payload.get("view_sync_enabled", True))
+
+    if source_path == LEGACY_KIOSK_STATE_PATH:
+        persist_kiosk_state()
 
 
 def set_kiosk_enabled(enabled: bool) -> None:
@@ -700,6 +714,7 @@ def build_feeder_snapshot() -> dict:
         clock_offset is not None
         and abs(clock_offset) <= FEEDER_CLOCK_TOLERANCE_SECONDS
     )
+    blocked_feed_statuses = {"feeding", "booting", "restarting", "offline"}
     countdown = (
         None
         if countdown_target is None
@@ -722,7 +737,7 @@ def build_feeder_snapshot() -> dict:
         "schedule": values.get("schedule.json"),
         "counters": values.get("feed_counters.json"),
         "lastError": values.get("last_error"),
-        "canFeed": connected and status == "idle",
+        "canFeed": connected and status not in blocked_feed_statuses,
     }
 
 
@@ -937,7 +952,7 @@ def api_feeder_feed():
     reason = None
     if not feeder["connected"]:
         reason = "Fiskmataren är inte uppkopplad."
-    elif feeder["status"] != "idle":
+    elif feeder["status"] in {"feeding", "booting", "restarting", "offline"}:
         reason = f"Fiskmataren är inte redo (status: {feeder['status']})."
 
     event_payload = json.dumps(

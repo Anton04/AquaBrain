@@ -467,7 +467,9 @@ function updateFeeder(feeder){
     offline:"Offline",
     unknown:"Okänd"
   };
-  feederStatus.textContent = statusNames[feeder.status] || feeder.status;
+  feederStatus.textContent = feeder.connected && feeder.status === "unknown"
+    ? "Uppkopplad"
+    : (statusNames[feeder.status] || feeder.status);
   feederStatus.classList.toggle("offline", !feeder.connected);
   feederConnectionWarning.classList.toggle("visible", !feeder.connected);
 
