@@ -433,6 +433,7 @@ let adminStatusLoaded = false;
 let kioskEnabled = true;
 let viewSyncEnabled = true;
 let lastForcedViewVersion = 0;
+let appInstanceId = null;
 
 function formatValue(value){
   return value === null || value === undefined ? "--" : `${value.toFixed(1)}°C`;
@@ -709,6 +710,12 @@ async function updateState(){
   try{
     const response = await fetch("/api/state", {cache:"no-store"});
     const data = await response.json();
+
+    if(appInstanceId && data.appInstanceId && data.appInstanceId !== appInstanceId){
+      window.location.reload();
+      return;
+    }
+    appInstanceId = data.appInstanceId || appInstanceId;
 
     document.getElementById("value1").textContent = formatValue(data.aquarium.value);
     document.getElementById("aquariumStatus").textContent = data.aquarium.status;

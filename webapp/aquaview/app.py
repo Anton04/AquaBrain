@@ -6,6 +6,7 @@ import signal
 import subprocess
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -15,9 +16,16 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 import paho.mqtt.client as mqtt
 
 app = Flask(__name__)
+APP_INSTANCE_ID = uuid.uuid4().hex
 
 MQTT_HOST = os.environ.get("AQUAVIEW_MQTT_HOST", "127.0.0.1")
 MQTT_PORT = int(os.environ.get("AQUAVIEW_MQTT_PORT", "1883"))
+FEEDER_MQTT_HOST = os.environ.get(
+    "AQUAVIEW_FEEDER_MQTT_HOST", "192.168.0.143"
+)
+FEEDER_MQTT_PORT = int(
+    os.environ.get("AQUAVIEW_FEEDER_MQTT_PORT", "1883")
+)
 
 BASE_TOPIC = "app/aquaview"
 VIEW_PROPERTY_TOPIC = f"{BASE_TOPIC}/properties/current-view"
@@ -78,12 +86,14 @@ class AppState:
     feeder_clock_offset_seconds: float | None = None
     feeder_countdown_target: float | None = None
     feeder_countdown_active: bool = False
+    feeder_broker_connected: bool = False
 
 
 state = AppState()
 state_lock = threading.Lock()
 kiosk_control_lock = threading.Lock()
 mqtt_client: mqtt.Client | None = None
+feeder_mqtt_client: mqtt.Client | None = None
 update_lock = threading.Lock()
 
 
@@ -702,11 +712,13 @@ def build_feeder_snapshot() -> dict:
         last_seen = state.feeder_last_seen
         clock_offset = state.feeder_clock_offset_seconds
         countdown_target = state.feeder_countdown_target
+        broker_connected = state.feeder_broker_connected
 
     message_age = None if last_seen is None else max(0, now - last_seen)
     status = str(values.get("status") or "unknown").lower()
     connected = (
-        message_age is not None
+        broker_connected
+        and message_age is not None
         and message_age <= FEEDER_STALE_SECONDS
         and status != "offline"
     )
@@ -723,6 +735,7 @@ def build_feeder_snapshot() -> dict:
 
     return {
         "deviceId": FEEDER_DEVICE_ID,
+        "brokerConnected": broker_connected,
         "connected": connected,
         "status": status,
         "lastSeenSeconds": (
@@ -824,7 +837,6 @@ def on_connect(client: mqtt.Client, _userdata, _flags, reason_code, _properties=
         (SCREEN_COMMAND_TOPIC, 0),
         (KIOSK_COMMAND_TOPIC, 0),
         (UPDATE_COMMAND_TOPIC, 0),
-        (f"{FEEDER_BASE_TOPIC}/properties/#", 0),
     ]
     if ROOM_TOPIC:
         subscriptions.append((ROOM_TOPIC, 0))
@@ -881,12 +893,6 @@ def on_message(_client: mqtt.Client, _userdata, message: mqtt.MQTTMessage) -> No
         update_from_mqtt_async()
         return
 
-    feeder_property_prefix = f"{FEEDER_BASE_TOPIC}/properties/"
-    if topic.startswith(feeder_property_prefix):
-        property_name = topic.removeprefix(feeder_property_prefix)
-        record_feeder_property(property_name, payload)
-        return
-
     parsed = parse_temperature_payload(payload)
     if parsed is None:
         return
@@ -901,6 +907,67 @@ def start_mqtt() -> mqtt.Client:
     client.on_message = on_message
     debug(f"Connecting AquaView MQTT client to {MQTT_HOST}:{MQTT_PORT}")
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+    client.loop_start()
+    return client
+
+
+def on_feeder_connect(
+    client: mqtt.Client,
+    _userdata,
+    _flags,
+    reason_code,
+    _properties=None,
+) -> None:
+    debug(
+        f"Connected to fish feeder MQTT broker "
+        f"{FEEDER_MQTT_HOST}:{FEEDER_MQTT_PORT} with rc={reason_code}"
+    )
+    with state_lock:
+        state.feeder_broker_connected = not reason_code.is_failure
+    if not reason_code.is_failure:
+        client.subscribe(f"{FEEDER_BASE_TOPIC}/properties/#", qos=0)
+
+
+def on_feeder_disconnect(
+    _client: mqtt.Client,
+    _userdata,
+    _disconnect_flags,
+    reason_code,
+    _properties=None,
+) -> None:
+    warn(f"Disconnected from fish feeder MQTT broker with rc={reason_code}")
+    with state_lock:
+        state.feeder_broker_connected = False
+
+
+def on_feeder_message(
+    _client: mqtt.Client,
+    _userdata,
+    message: mqtt.MQTTMessage,
+) -> None:
+    feeder_property_prefix = f"{FEEDER_BASE_TOPIC}/properties/"
+    if not message.topic.startswith(feeder_property_prefix):
+        return
+    property_name = message.topic.removeprefix(feeder_property_prefix)
+    debug(f"Received fish feeder property {property_name}")
+    record_feeder_property(property_name, message.payload)
+
+
+def start_feeder_mqtt() -> mqtt.Client:
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client.on_connect = on_feeder_connect
+    client.on_disconnect = on_feeder_disconnect
+    client.on_message = on_feeder_message
+    client.reconnect_delay_set(min_delay=1, max_delay=60)
+    debug(
+        f"Connecting fish feeder MQTT client to "
+        f"{FEEDER_MQTT_HOST}:{FEEDER_MQTT_PORT}"
+    )
+    client.connect_async(
+        FEEDER_MQTT_HOST,
+        FEEDER_MQTT_PORT,
+        keepalive=60,
+    )
     client.loop_start()
     return client
 
@@ -930,6 +997,7 @@ def api_state():
 
     return jsonify(
         {
+            "appInstanceId": APP_INSTANCE_ID,
             "room": room,
             "aquarium": aquarium,
             "cpu": cpu,
@@ -979,7 +1047,12 @@ def api_feeder_feed():
     if not accepted:
         return jsonify({"ok": False, "error": reason}), 409
 
-    result = mqtt_client.publish(
+    if feeder_mqtt_client is None or not feeder_mqtt_client.is_connected():
+        return jsonify(
+            {"ok": False, "error": "Fiskmatarens MQTT-broker är inte ansluten."}
+        ), 503
+
+    result = feeder_mqtt_client.publish(
         f"{FEEDER_BASE_TOPIC}/commands/feed",
         payload="1",
         qos=0,
@@ -1078,6 +1151,7 @@ def api_kiosk_stop():
 if os.environ.get("AQUAVIEW_DISABLE_RUNTIME") != "1":
     load_kiosk_state()
     mqtt_client = start_mqtt()
+    feeder_mqtt_client = start_feeder_mqtt()
     start_kiosk_watchdog()
     start_feeder_schedule_watchdog()
 

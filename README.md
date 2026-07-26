@@ -84,3 +84,15 @@ The AquaView backend listens on the local AquaBrain MQTT broker:
 The update command refuses to run if the worktree is dirty, the local branch is
 ahead of origin, or the branches have diverged. Never publish the update command
 as a retained MQTT message.
+
+## Fish feeder MQTT broker
+
+AquaView uses a separate MQTT connection for the fish feeder:
+
+- AquaBrain events and commands: `AQUAVIEW_MQTT_HOST` (default `127.0.0.1`)
+- Fish feeder properties and commands: `AQUAVIEW_FEEDER_MQTT_HOST` (default `192.168.0.143`)
+- Fish feeder port: `AQUAVIEW_FEEDER_MQTT_PORT` (default `1883`)
+- Fish feeder ID: `AQUAVIEW_FEEDER_DEVICE_ID` (default `fishfeeder-c78f`)
+
+After an application update, the browser detects the restarted backend through
+a new application instance ID and reloads the page to fetch the new frontend.
